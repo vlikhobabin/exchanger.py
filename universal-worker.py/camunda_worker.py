@@ -134,7 +134,8 @@ class UniversalCamundaWorker:
                 
                 if tasks:
                     consecutive_errors = 0  # Сброс счетчика ошибок при успешном получении
-                    logger.info(f"Получено {len(tasks)} задач для топика {topic}")
+                    if len(tasks) > 1:  # Логируем только если получено несколько задач
+                        logger.info(f"Получено {len(tasks)} задач для топика {topic}")
                     
                     for task_data in tasks:
                         if self.stop_event.is_set():
@@ -167,7 +168,6 @@ class UniversalCamundaWorker:
         task_id = task_data.get('id', 'unknown')
         
         try:
-            logger.info(f"Обработка задачи {task_id} | Топик: {topic}")
             self.stats["processed_tasks"] += 1
             
             # Создание объекта ExternalTask
@@ -181,8 +181,6 @@ class UniversalCamundaWorker:
             if self.metadata_cache and process_definition_id and activity_id:
                 try:
                     metadata = self.metadata_cache.get_activity_metadata(process_definition_id, activity_id)
-                    if metadata:
-                        logger.debug(f"Получены метаданные для задачи {task_id}: {list(metadata.keys())}")
                 except Exception as e:
                     logger.warning(f"Ошибка получения метаданных для задачи {task_id}: {e}")
             
@@ -207,15 +205,11 @@ class UniversalCamundaWorker:
             
             # Определение целевой системы
             system = self.routing_config.get_system_for_topic(topic)
-            logger.info(f"Задача {task_id} направляется в систему: {system}")
             
             # Отправка в RabbitMQ
             if self.rabbitmq_client.publish_task(topic, task_payload):
                 self.stats["successful_tasks"] += 1
-                logger.info(f"Задача {task_id} успешно отправлена в RabbitMQ")
-                
-                # В Stateless режиме задача остается заблокированной
-                logger.info(f"Задача {task_id} остается заблокированной, ожидает ответа из {system}")
+                logger.info(f"Задача {task_id} отправлена в {system}, ожидает ответа")
             else:
                 raise Exception("Не удалось опубликовать задачу в RabbitMQ")
                 
@@ -315,7 +309,6 @@ class UniversalCamundaWorker:
             # Подтверждаем или отклоняем сообщение
             if success:
                 self.rabbitmq_client.channel.basic_ack(delivery_tag=method_frame.delivery_tag)
-                logger.debug("Сообщение из очереди ответов успешно обработано и удалено")
             else:
                 self.rabbitmq_client.channel.basic_nack(
                     delivery_tag=method_frame.delivery_tag, 
@@ -350,19 +343,11 @@ class UniversalCamundaWorker:
                 return True  # Считаем успешным, удаляем сообщение
             
             # Подготавливаем переменные для Camunda
-            logger.info(f"🔧 Подготовка переменных для завершения задачи {task_id}")
+            original_variables = message_data.get("original_message", {}).get("variables", {})
+            variables = original_variables.copy() if original_variables else {}
             
-            # РАДИКАЛЬНЫЙ ЭКСПЕРИМЕНТ: НЕ передаем НИКАКИХ переменных!
-            variables = {}  # Полностью пустой словарь
-            
-            logger.info(f"   🧪 РАДИКАЛЬНЫЙ ЭКСПЕРИМЕНТ: НЕ передаем НИКАКИХ переменных!")
-            logger.info(f"   🎯 Цель: проверить работает ли Gateway без переменных")
-            logger.info(f"   💡 Если ошибка останется - проблема в самом BPMN процессе")
-            logger.info(f"   🚫 НЕ возвращаем исходные переменные")
-            logger.info(f"   🚫 НЕ добавляем никаких Boolean переменных")
-            logger.info(f"   🚫 НЕ переопределяем result или outputParameter")
-            
-            logger.info(f"   📊 Итого переменных для передачи: {len(variables)}")
+            # Добавляем результат выполнения
+            variables["result"] = "ok"
             
             # Завершаем задачу в Camunda
             return self._complete_task_in_camunda(task_id, variables)
@@ -390,24 +375,10 @@ class UniversalCamundaWorker:
                 "variables": formatted_variables
             }
             
-            # Подробное логирование для диагностики
-            logger.info(f"🔍 Завершение задачи {task_id}:")
-            logger.info(f"   URL: {url}")
-            logger.info(f"   Worker ID: {self.config.worker_id}")
-            logger.info(f"   Исходные переменные: {variables}")
-            logger.info(f"   Форматированные переменные: {formatted_variables}")
-            logger.info(f"   Payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
-            
             # Настраиваем аутентификацию
             auth = None
             if self.config.auth_enabled:
                 auth = (self.config.auth_username, self.config.auth_password)
-                logger.info(f"   Аутентификация: включена (пользователь: {self.config.auth_username})")
-            else:
-                logger.info("   Аутентификация: отключена")
-            
-            # Отправляем запрос с коротким таймаутом
-            logger.info("📤 Отправка запроса в Camunda...")
             
             import time
             start_time = time.time()
@@ -422,7 +393,6 @@ class UniversalCamundaWorker:
                 )
                 
                 request_duration = time.time() - start_time
-                logger.info(f"📥 Ответ от Camunda: статус {response.status_code} (за {request_duration:.2f}с)")
                 
             except requests.exceptions.Timeout:
                 logger.error(f"⏰ Таймаут запроса к Camunda для задачи {task_id} (>10с)")
@@ -434,11 +404,9 @@ class UniversalCamundaWorker:
                 logger.error(f"🌐 Ошибка HTTP запроса к Camunda для задачи {task_id}: {e}")
                 return False
             
-            if response.text:
-                logger.info(f"   Тело ответа: {response.text}")
+
             
             if response.status_code == 204:
-                logger.info(f"✅ Задача {task_id} успешно завершена в Camunda")
                 self.stats["successful_completions"] += 1
                 return True
             elif response.status_code == 404:
@@ -570,12 +538,11 @@ class UniversalCamundaWorker:
                     
                     # Проверка очереди ответов с интервалом heartbeat_interval
                     if current_time - last_response_check >= self.worker_config.heartbeat_interval:
-                        logger.debug("Проверка очереди ответов...")
                         self._check_response_queue()
                         last_response_check = current_time
                 
-                # Мониторинг каждые 30 секунд
-                self.stop_event.wait(30)
+                # Мониторинг каждые 60 секунд
+                self.stop_event.wait(60)
                 
             except Exception as e:
                 logger.error(f"Ошибка в мониторинге: {e}")

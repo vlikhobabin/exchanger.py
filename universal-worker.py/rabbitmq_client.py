@@ -61,7 +61,7 @@ class RabbitMQClient:
                 exchange_type=self.config.alternate_exchange_type,
                 durable=True
             )
-            logger.info(f"Alternate Exchange создан: {self.config.alternate_exchange_name}")
+            logger.debug(f"Alternate Exchange создан: {self.config.alternate_exchange_name}")
             
             # 2. Создание основного exchange с указанием Alternate Exchange
             self.channel.exchange_declare(
@@ -72,7 +72,7 @@ class RabbitMQClient:
                     'alternate-exchange': self.config.alternate_exchange_name
                 }
             )
-            logger.info(f"Tasks Exchange создан с AE: {self.config.tasks_exchange_name}")
+            logger.debug(f"Tasks Exchange создан с AE: {self.config.tasks_exchange_name}")
             
             # 3. Создание exchange для ответов (без изменений)
             self.channel.exchange_declare(
@@ -80,7 +80,7 @@ class RabbitMQClient:
                 exchange_type=self.config.responses_exchange_type,
                 durable=True
             )
-            logger.info(f"Responses Exchange создан: {self.config.responses_exchange_name}")
+            logger.debug(f"Responses Exchange создан: {self.config.responses_exchange_name}")
             
             # 4. Создание очереди для ответов (без изменений)
             self.channel.queue_declare(queue=self.config.responses_queue_name, durable=True)
@@ -89,13 +89,13 @@ class RabbitMQClient:
                 queue=self.config.responses_queue_name,
                 routing_key=self.config.responses_queue_name
             )
-            logger.info(f"Очередь ответов создана: {self.config.responses_queue_name}")
+            logger.debug(f"Очередь ответов создана: {self.config.responses_queue_name}")
             
             # 5. Создание очередей для задач с обычными привязками
             for queue_name, routing_keys in self.routing.ROUTING_BINDINGS.items():
                 # Создание очереди
                 self.channel.queue_declare(queue=queue_name, durable=True)
-                logger.info(f"Очередь создана: {queue_name}")
+                logger.debug(f"Очередь создана: {queue_name}")
                 
                 # Привязка очереди к основному exchange
                 for routing_key in routing_keys:
@@ -104,7 +104,7 @@ class RabbitMQClient:
                         queue=queue_name,
                         routing_key=routing_key
                     )
-                    logger.info(f"Привязка создана: {queue_name} <- {routing_key}")
+                    logger.debug(f"Привязка создана: {queue_name} <- {routing_key}")
             
             # 6. Создание default.queue и привязка к Alternate Exchange
             self.channel.queue_declare(queue="default.queue", durable=True)
@@ -113,7 +113,7 @@ class RabbitMQClient:
                 queue="default.queue",
                 routing_key=""  # Fanout не использует routing key
             )
-            logger.info(f"Default queue привязана к Alternate Exchange")
+            logger.debug(f"Default queue привязана к Alternate Exchange")
             
             # 7. Создание очереди для ошибок (без изменений)
             error_queue = "errors.camunda_tasks.queue"
@@ -123,7 +123,7 @@ class RabbitMQClient:
                 queue=error_queue,
                 routing_key="errors.camunda_tasks"
             )
-            logger.info(f"Очередь ошибок создана: {error_queue}")
+            logger.debug(f"Очередь ошибок создана: {error_queue}")
             
             return True
             
@@ -180,7 +180,7 @@ class RabbitMQClient:
                 )
             )
             
-            logger.info(f"Задача опубликована: {topic} -> {routing_key} (система: {system})")
+            logger.debug(f"Задача опубликована: {topic} -> {routing_key} (система: {system})")
             return True
             
         except Exception as e:
@@ -291,7 +291,7 @@ class RabbitMQClient:
                             info[queue_name]["source"] = "alternate_exchange"
                             info[queue_name]["alternate_exchange"] = self.config.alternate_exchange_name
                             
-                logger.info(f"Получена информация о {len(info)} очередях через Management API")
+                logger.debug(f"Получена информация о {len(info)} очередях через Management API")
                 return info
                 
         except Exception as e:
@@ -368,7 +368,7 @@ class RabbitMQClient:
                 auto_ack=auto_ack
             )
             
-            logger.info(f"Начато потребление ответов из очереди: {self.config.responses_queue_name}")
+            logger.debug(f"Начато потребление ответов из очереди: {self.config.responses_queue_name}")
             return True
             
         except Exception as e:
@@ -382,7 +382,7 @@ class RabbitMQClient:
                 logger.error("Нет активного соединения с RabbitMQ")
                 return
                 
-            logger.info("Запуск потребления сообщений...")
+            logger.debug("Запуск потребления сообщений...")
             self.channel.start_consuming()
             
         except Exception as e:
@@ -393,7 +393,7 @@ class RabbitMQClient:
         try:
             if self.channel:
                 self.channel.stop_consuming()
-                logger.info("Потребление сообщений остановлено")
+                logger.debug("Потребление сообщений остановлено")
                 
         except Exception as e:
             logger.error(f"Ошибка остановки потребления: {e}")
@@ -429,7 +429,7 @@ class RabbitMQClient:
                 )
             )
             
-            logger.info(f"Ответ на задачу отправлен: {response_data.get('task_id')}")
+            logger.debug(f"Ответ на задачу отправлен: {response_data.get('task_id')}")
             return True
             
         except Exception as e:
