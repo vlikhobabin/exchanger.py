@@ -346,8 +346,12 @@ class UniversalCamundaWorker:
             original_variables = message_data.get("original_message", {}).get("variables", {})
             variables = original_variables.copy() if original_variables else {}
             
-            # Добавляем результат выполнения
-            variables["result"] = "ok"
+            # Определяем успех/ошибку на основе response_data
+            result_status = self._determine_result_status(response_data)
+            variables["result"] = result_status
+            
+            # Извлекаем данные из ответа системы (например, Bitrix24)
+            self._extract_response_data(response_data, variables)
             
             # Завершаем задачу в Camunda
             return self._complete_task_in_camunda(task_id, variables)
@@ -355,6 +359,93 @@ class UniversalCamundaWorker:
         except Exception as e:
             logger.error(f"Ошибка обработки ответного сообщения: {e}")
             return False
+    
+    def _determine_result_status(self, response_data: Dict[str, Any]) -> str:
+        """Определение статуса результата на основе response_data"""
+        try:
+            result = response_data.get("result", {})
+            
+            # Проверяем наличие явных индикаторов ошибки
+            if "error" in result and result["error"]:
+                return "error"
+            
+            if "success" in result:
+                return "ok" if result["success"] else "error"
+            
+            # Если есть данные задачи, считаем успешным
+            if "task" in result and result["task"]:
+                return "ok"
+            
+            # По умолчанию - успех (для совместимости)
+            return "ok"
+            
+        except Exception as e:
+            logger.error(f"Ошибка определения статуса результата: {e}")
+            return "error"
+    
+    def _extract_response_data(self, response_data: Dict[str, Any], variables: Dict[str, Any]):
+        """Извлечение данных из ответа системы и добавление в переменные Camunda"""
+        try:
+            # Получаем результат из response_data
+            result = response_data.get("result", {})
+            
+            # Логируем структуру для отладки
+            logger.debug(f"Извлекаем данные из response_data.result: {result}")
+            
+            # Извлекаем данные задачи (например, от Bitrix24)
+            task_data = result.get("task", {})
+            if task_data:
+                # Основные данные задачи
+                if "ID" in task_data:
+                    variables["bitrix_task_id"] = str(task_data["ID"])
+                if "TITLE" in task_data:
+                    variables["bitrix_task_title"] = str(task_data["TITLE"])
+                if "DESCRIPTION" in task_data:
+                    variables["bitrix_task_description"] = str(task_data["DESCRIPTION"])
+                if "STATUS" in task_data:
+                    variables["bitrix_task_status"] = str(task_data["STATUS"])
+                if "PRIORITY" in task_data:
+                    variables["bitrix_task_priority"] = str(task_data["PRIORITY"])
+                
+                # Даты
+                if "CREATED_DATE" in task_data:
+                    variables["bitrix_task_created_date"] = str(task_data["CREATED_DATE"])
+                if "CHANGED_DATE" in task_data:
+                    variables["bitrix_task_changed_date"] = str(task_data["CHANGED_DATE"])
+                if "DEADLINE" in task_data:
+                    variables["bitrix_task_deadline"] = str(task_data["DEADLINE"])
+                
+                # Пользователи
+                if "CREATED_BY" in task_data:
+                    variables["bitrix_task_created_by"] = str(task_data["CREATED_BY"])
+                if "RESPONSIBLE_ID" in task_data:
+                    variables["bitrix_task_responsible_id"] = str(task_data["RESPONSIBLE_ID"])
+                
+                # Дополнительные данные
+                if "GROUP_ID" in task_data:
+                    variables["bitrix_task_group_id"] = str(task_data["GROUP_ID"])
+                if "PARENT_ID" in task_data:
+                    variables["bitrix_task_parent_id"] = str(task_data["PARENT_ID"])
+                
+                # Сохраняем полную структуру задачи как JSON для сложных случаев
+                variables["bitrix_task_data"] = task_data
+                
+                logger.info(f"Извлечены данные задачи Bitrix24: ID={task_data.get('ID')}, Title={task_data.get('TITLE')}")
+            
+            # Извлекаем другие данные из result
+            if "success" in result:
+                variables["system_success"] = result["success"]
+            if "message" in result:
+                variables["system_message"] = str(result["message"])
+            if "error" in result:
+                variables["system_error"] = str(result["error"])
+            
+            # Сохраняем полный response_data для сложных случаев
+            variables["response_data"] = response_data
+            
+        except Exception as e:
+            logger.error(f"Ошибка извлечения данных из response_data: {e}")
+            # Не прерываем выполнение, просто логируем ошибку
     
     def _complete_task_in_camunda(self, task_id: str, variables: Dict[str, Any]) -> bool:
         """Завершение задачи в Camunda через REST API"""
