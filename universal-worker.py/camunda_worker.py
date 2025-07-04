@@ -349,21 +349,20 @@ class UniversalCamundaWorker:
                 logger.warning(f"Задача {task_id} имеет статус '{processing_status}', пропускаем")
                 return True  # Считаем успешным, удаляем сообщение
             
-            # Извлекаем данные результата для передачи в Camunda
-            task_result = response_data.get("result", {}).get("task", {})
-            if not task_result:
-                logger.warning(f"Отсутствуют данные результата для задачи {task_id}")
-                # Завершаем задачу без переменных
-                return self._complete_task_in_camunda(task_id, {})
-            
             # Подготавливаем переменные для Camunda
-            variables = {
-                "task_result": task_result,
-                "processing_status": processing_status,
-                "processed_at": message_data.get("processed_at"),
-                "original_topic": original_message.get("topic"),
-                "external_system": original_message.get("system")
-            }
+            logger.info(f"🔧 Подготовка переменных для завершения задачи {task_id}")
+            
+            # РАДИКАЛЬНЫЙ ЭКСПЕРИМЕНТ: НЕ передаем НИКАКИХ переменных!
+            variables = {}  # Полностью пустой словарь
+            
+            logger.info(f"   🧪 РАДИКАЛЬНЫЙ ЭКСПЕРИМЕНТ: НЕ передаем НИКАКИХ переменных!")
+            logger.info(f"   🎯 Цель: проверить работает ли Gateway без переменных")
+            logger.info(f"   💡 Если ошибка останется - проблема в самом BPMN процессе")
+            logger.info(f"   🚫 НЕ возвращаем исходные переменные")
+            logger.info(f"   🚫 НЕ добавляем никаких Boolean переменных")
+            logger.info(f"   🚫 НЕ переопределяем result или outputParameter")
+            
+            logger.info(f"   📊 Итого переменных для передачи: {len(variables)}")
             
             # Завершаем задачу в Camunda
             return self._complete_task_in_camunda(task_id, variables)
@@ -385,30 +384,90 @@ class UniversalCamundaWorker:
             url = f"{api_base_url}/external-task/{task_id}/complete"
             
             # Подготавливаем payload
+            formatted_variables = self._format_variables(variables)
             payload = {
                 "workerId": self.config.worker_id,
-                "variables": self._format_variables(variables)
+                "variables": formatted_variables
             }
+            
+            # Подробное логирование для диагностики
+            logger.info(f"🔍 Завершение задачи {task_id}:")
+            logger.info(f"   URL: {url}")
+            logger.info(f"   Worker ID: {self.config.worker_id}")
+            logger.info(f"   Исходные переменные: {variables}")
+            logger.info(f"   Форматированные переменные: {formatted_variables}")
+            logger.info(f"   Payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
             
             # Настраиваем аутентификацию
             auth = None
             if self.config.auth_enabled:
                 auth = (self.config.auth_username, self.config.auth_password)
+                logger.info(f"   Аутентификация: включена (пользователь: {self.config.auth_username})")
+            else:
+                logger.info("   Аутентификация: отключена")
             
-            # Отправляем запрос
-            response = requests.post(url, json=payload, auth=auth, timeout=30)
+            # Отправляем запрос с коротким таймаутом
+            logger.info("📤 Отправка запроса в Camunda...")
+            
+            import time
+            start_time = time.time()
+            
+            try:
+                response = requests.post(
+                    url, 
+                    json=payload, 
+                    auth=auth, 
+                    timeout=10,  # Короткий таймаут - 10 секунд
+                    headers={'Content-Type': 'application/json'}
+                )
+                
+                request_duration = time.time() - start_time
+                logger.info(f"📥 Ответ от Camunda: статус {response.status_code} (за {request_duration:.2f}с)")
+                
+            except requests.exceptions.Timeout:
+                logger.error(f"⏰ Таймаут запроса к Camunda для задачи {task_id} (>10с)")
+                return False
+            except requests.exceptions.ConnectionError as e:
+                logger.error(f"🔌 Ошибка соединения с Camunda для задачи {task_id}: {e}")
+                return False
+            except requests.exceptions.RequestException as e:
+                logger.error(f"🌐 Ошибка HTTP запроса к Camunda для задачи {task_id}: {e}")
+                return False
+            
+            if response.text:
+                logger.info(f"   Тело ответа: {response.text}")
             
             if response.status_code == 204:
-                logger.info(f"Задача {task_id} успешно завершена в Camunda")
+                logger.info(f"✅ Задача {task_id} успешно завершена в Camunda")
                 self.stats["successful_completions"] += 1
                 return True
+            elif response.status_code == 404:
+                logger.warning(f"🔍 Задача {task_id} не найдена в Camunda (возможно уже завершена или истёк lock)")
+                # Считаем это успехом - задача больше не активна
+                self.stats["successful_completions"] += 1
+                return True
+            elif response.status_code == 500:
+                logger.error(f"💥 Внутренняя ошибка Camunda для задачи {task_id}: {response.text}")
+                # Попробуем получить более детальную информацию об ошибке
+                try:
+                    error_data = response.json()
+                    error_type = error_data.get("type", "unknown")
+                    error_message = error_data.get("message", "unknown")
+                    logger.error(f"   Тип ошибки: {error_type}")
+                    logger.error(f"   Сообщение: {error_message}")
+                except:
+                    pass
+                self.stats["failed_completions"] += 1
+                return False
             else:
-                logger.error(f"Ошибка завершения задачи {task_id} в Camunda: HTTP {response.status_code} - {response.text}")
+                logger.error(f"❌ Неожиданный код ответа от Camunda для задачи {task_id}: HTTP {response.status_code} - {response.text}")
                 self.stats["failed_completions"] += 1
                 return False
                 
         except Exception as e:
-            logger.error(f"Ошибка завершения задачи {task_id} в Camunda: {e}")
+            logger.error(f"💥 Исключение при завершении задачи {task_id} в Camunda: {e}")
+            import traceback
+            traceback.print_exc()
             self.stats["failed_completions"] += 1
             return False
     
