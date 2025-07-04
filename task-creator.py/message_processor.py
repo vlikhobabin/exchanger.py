@@ -9,7 +9,7 @@ import threading
 from typing import Dict, Any
 from loguru import logger
 
-from config import worker_config, systems_config
+from config import worker_config, systems_config, tracker_config
 from rabbitmq_consumer import RabbitMQConsumer
 import importlib
 
@@ -20,6 +20,7 @@ class MessageProcessor:
     def __init__(self):
         self.config = worker_config
         self.systems_config = systems_config
+        self.tracker_config = tracker_config
         
         # Компоненты
         self.consumer = RabbitMQConsumer()
@@ -28,9 +29,16 @@ class MessageProcessor:
         self.handlers = {}
         self._load_handlers()
         
+        # Tracker'ы для отслеживания задач (загружаются динамически)
+        self.trackers = {}
+        self._load_trackers()
+        
         # Управление работой
         self.running = False
         self.shutdown_event = threading.Event()
+        
+        # Потоки для tracker'ов
+        self.tracker_threads = {}
         
         # Статистика
         self.stats = {
@@ -38,7 +46,8 @@ class MessageProcessor:
             "total_messages": 0,
             "processed_messages": 0,
             "failed_messages": 0,
-            "handler_stats": {}
+            "handler_stats": {},
+            "tracker_stats": {}
         }
         
         # Настройка обработки сигналов
@@ -77,6 +86,39 @@ class MessageProcessor:
                 logger.error(f"Ошибка загрузки обработчика для {queue_name}: {e}")
         
         logger.info(f"Загружено {len(self.handlers)} обработчиков")
+    
+    def _load_trackers(self):
+        """Динамическая загрузка tracker'ов из модулей"""
+        active_trackers = self.tracker_config.get_active_trackers()
+        
+        for sent_queue in active_trackers:
+            try:
+                tracker_info = self.tracker_config.get_tracker_info(sent_queue)
+                if not tracker_info:
+                    continue
+                
+                module_path = tracker_info["module"]
+                tracker_class_name = tracker_info["tracker_class"]
+                
+                # Импорт модуля
+                module = importlib.import_module(module_path)
+                
+                # Получение класса tracker'а
+                tracker_class = getattr(module, tracker_class_name)
+                
+                # Создание экземпляра tracker'а
+                tracker_instance = tracker_class()
+                
+                # Определение ключа для tracker'а (название очереди без .sent.queue)
+                tracker_key = sent_queue.replace('.sent.queue', '_tracker')
+                self.trackers[tracker_key] = tracker_instance
+                
+                logger.info(f"Загружен tracker {tracker_class_name} для {sent_queue}")
+                
+            except Exception as e:
+                logger.error(f"Ошибка загрузки tracker'а для {sent_queue}: {e}")
+        
+        logger.info(f"Загружено {len(self.trackers)} tracker'ов")
     
     def _signal_handler(self, signum, frame):
         """Обработчик сигналов завершения"""
@@ -124,7 +166,7 @@ class MessageProcessor:
                 logger.error("Не зарегистрировано ни одного обработчика")
                 return False
             
-            logger.info(f"Инициализация завершена успешно ({registered_count} обработчиков)")
+            logger.info(f"Инициализация завершена успешно ({registered_count} обработчиков, {len(self.trackers)} tracker'ов)")
             return True
             
         except Exception as e:
@@ -187,6 +229,71 @@ class MessageProcessor:
             logger.error(f"Критическая ошибка при обработке сообщения через {handler_type}: {e}")
             return False
     
+    def _start_trackers(self):
+        """Запуск tracker'ов в отдельных потоках"""
+        for tracker_key, tracker in self.trackers.items():
+            try:
+                # Создаем поток для tracker'а
+                thread = threading.Thread(
+                    target=self._tracker_worker,
+                    args=(tracker_key, tracker),
+                    daemon=True,
+                    name=f"Tracker-{tracker_key}"
+                )
+                
+                # Запускаем поток
+                thread.start()
+                self.tracker_threads[tracker_key] = thread
+                
+                logger.info(f"Запущен tracker {tracker_key} в отдельном потоке")
+                
+            except Exception as e:
+                logger.error(f"Ошибка запуска tracker'а {tracker_key}: {e}")
+        
+        logger.info(f"Запущено {len(self.tracker_threads)} tracker'ов")
+    
+    def _tracker_worker(self, tracker_key: str, tracker):
+        """Рабочий метод для tracker'а в отдельном потоке"""
+        try:
+            logger.info(f"Поток tracker'а {tracker_key} запущен")
+            
+            # Инициализация статистики tracker'а
+            self.stats["tracker_stats"][tracker_key] = {
+                "start_time": time.time(),
+                "last_check_time": None,
+                "cycles_completed": 0,
+                "errors": 0
+            }
+            
+            # Основной цикл tracker'а
+            while not self.shutdown_event.is_set() and self.running:
+                try:
+                    cycle_start = time.time()
+                    
+                    # Вызов метода проверки tracker'а
+                    tracker._check_tasks_in_queue()
+                    
+                    # Обновление статистики
+                    tracker_stats = self.stats["tracker_stats"][tracker_key]
+                    tracker_stats["last_check_time"] = time.time()
+                    tracker_stats["cycles_completed"] += 1
+                    
+                    # Ожидание следующего цикла
+                    self.shutdown_event.wait(self.config.heartbeat_interval)
+                    
+                except Exception as e:
+                    logger.error(f"Ошибка в цикле tracker'а {tracker_key}: {e}")
+                    if tracker_key in self.stats["tracker_stats"]:
+                        self.stats["tracker_stats"][tracker_key]["errors"] += 1
+                    
+                    # Задержка при ошибке
+                    self.shutdown_event.wait(30)
+            
+            logger.info(f"Поток tracker'а {tracker_key} завершен")
+            
+        except Exception as e:
+            logger.error(f"Критическая ошибка в потоке tracker'а {tracker_key}: {e}")
+    
     def start(self) -> bool:
         """Запуск обработчика сообщений"""
         try:
@@ -197,6 +304,9 @@ class MessageProcessor:
             logger.info("Запуск Message Processor...")
             self.stats["start_time"] = time.time()
             self.running = True
+            
+            # Запуск tracker'ов в отдельных потоках
+            self._start_trackers()
             
             # Запуск мониторинга в отдельном потоке
             monitor_thread = threading.Thread(
@@ -242,6 +352,16 @@ class MessageProcessor:
                                 f"время: {stats['avg_processing_time']:.2f}s"
                             )
                     
+                    # Статистика по tracker'ам
+                    for tracker_key, stats in self.stats["tracker_stats"].items():
+                        if stats["cycles_completed"] > 0:
+                            tracker_uptime = time.time() - stats["start_time"]
+                            logger.info(
+                                f"  {tracker_key}: {stats['cycles_completed']} циклов, "
+                                f"uptime: {tracker_uptime:.0f}s, "
+                                f"ошибки: {stats['errors']}"
+                            )
+                    
                     # Проверка соединения с RabbitMQ
                     if not self.consumer.is_connected():
                         logger.warning("RabbitMQ соединение потеряно, попытка переподключения...")
@@ -266,6 +386,22 @@ class MessageProcessor:
         # Остановка потребления сообщений
         self.consumer.stop_consuming()
         
+        # Ожидание завершения tracker'ов
+        for tracker_key, thread in self.tracker_threads.items():
+            if thread.is_alive():
+                logger.info(f"Ожидание завершения tracker'а {tracker_key}...")
+                thread.join(timeout=10)
+                if thread.is_alive():
+                    logger.warning(f"Tracker {tracker_key} не завершился за 10 секунд")
+        
+        # Очистка ресурсов tracker'ов
+        for tracker in self.trackers.values():
+            try:
+                if hasattr(tracker, 'cleanup'):
+                    tracker.cleanup()
+            except Exception as e:
+                logger.error(f"Ошибка очистки tracker'а: {e}")
+        
         # Закрытие соединения с RabbitMQ
         self.consumer.disconnect()
         
@@ -288,6 +424,16 @@ class MessageProcessor:
                         f"успех: {success_rate:.1f}%, "
                         f"среднее время: {stats['avg_processing_time']:.2f}s"
                     )
+            
+            # Статистика по tracker'ам
+            for tracker_key, stats in self.stats["tracker_stats"].items():
+                if stats["cycles_completed"] > 0:
+                    tracker_uptime = time.time() - stats["start_time"]
+                    logger.info(
+                        f"  {tracker_key}: {stats['cycles_completed']} циклов, "
+                        f"uptime: {tracker_uptime:.0f}s, "
+                        f"ошибки: {stats['errors']}"
+                    )
         
         logger.info("Message Processor завершен")
     
@@ -304,12 +450,21 @@ class MessageProcessor:
             if hasattr(handler, 'get_stats'):
                 handler_detailed_stats[handler_type] = handler.get_stats()
         
+        # Получение статистики от tracker'ов
+        tracker_detailed_stats = {}
+        for tracker_key, tracker in self.trackers.items():
+            if hasattr(tracker, 'get_stats'):
+                tracker_detailed_stats[tracker_key] = tracker.get_stats()
+        
         return {
             "is_running": self.running,
             "uptime_seconds": uptime,
             "stats": self.stats.copy(),
             "consumer_stats": consumer_stats,
             "handler_stats": handler_detailed_stats,
+            "tracker_stats": tracker_detailed_stats,
             "registered_handlers": list(self.handlers.keys()),
-            "registered_queues": list(self.consumer.queue_handlers.keys())
+            "registered_trackers": list(self.trackers.keys()),
+            "registered_queues": list(self.consumer.queue_handlers.keys()) if hasattr(self.consumer, 'queue_handlers') else [],
+            "active_tracker_threads": [name for name, thread in self.tracker_threads.items() if thread.is_alive()]
         } 

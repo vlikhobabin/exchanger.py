@@ -4,6 +4,7 @@ RabbitMQ клиент для отправки задач от Camunda
 import json
 import pika
 import time
+import requests
 from typing import Dict, Any, Optional
 from loguru import logger
 from config import rabbitmq_config, routing_config, response_config
@@ -272,9 +273,32 @@ class RabbitMQClient:
             return None
     
     def get_all_queues_info(self) -> Dict[str, Dict[str, Any]]:
-        """Получение информации о всех очередях включая alternate"""
+        """Получение информации о всех очередях (включая динамически созданные)"""
         info = {}
         
+        # Пытаемся получить все очереди через Management API
+        try:
+            all_queues = self._get_all_queues_via_api()
+            if all_queues:
+                # Получаем информацию о каждой очереди
+                for queue_name in all_queues:
+                    queue_info = self.get_queue_info(queue_name)
+                    if queue_info:
+                        info[queue_name] = queue_info
+                        
+                        # Добавляем дополнительную информацию для известных очередей
+                        if queue_name == "default.queue":
+                            info[queue_name]["source"] = "alternate_exchange"
+                            info[queue_name]["alternate_exchange"] = self.config.alternate_exchange_name
+                            
+                logger.info(f"Получена информация о {len(info)} очередях через Management API")
+                return info
+                
+        except Exception as e:
+            logger.warning(f"Не удалось получить очереди через Management API: {e}")
+            logger.info("Используем fallback метод с предопределенными очередями")
+        
+        # Fallback: используем предопределенные очереди
         # Информация об очередях задач
         for queue_name in self.routing.ROUTING_BINDINGS.keys():
             queue_info = self.get_queue_info(queue_name)
@@ -299,6 +323,37 @@ class RabbitMQClient:
             info["default.queue"]["alternate_exchange"] = self.config.alternate_exchange_name
             
         return info
+    
+    def _get_all_queues_via_api(self) -> Optional[list]:
+        """Получение списка всех очередей через RabbitMQ Management API"""
+        try:
+            # Построение URL для Management API
+            # Обычно Management API работает на порту 15672
+            management_port = 15672
+            api_url = f"http://{self.config.host}:{management_port}/api/queues"
+            
+            # Выполняем HTTP запрос
+            response = requests.get(
+                api_url,
+                auth=(self.config.username, self.config.password),
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                queues_data = response.json()
+                # Извлекаем только имена очередей
+                queue_names = [queue['name'] for queue in queues_data]
+                return queue_names
+            else:
+                logger.warning(f"Management API вернул код {response.status_code}")
+                return None
+                
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Ошибка запроса к Management API: {e}")
+            return None
+        except Exception as e:
+            logger.warning(f"Неожиданная ошибка при работе с Management API: {e}")
+            return None
     
     def consume_responses(self, callback_function, auto_ack: bool = False):
         """Запуск потребления сообщений из очереди ответов"""

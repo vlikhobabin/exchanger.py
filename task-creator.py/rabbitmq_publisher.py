@@ -130,19 +130,19 @@ class RabbitMQPublisher:
                 logger.error(f"Не удалось определить очередь успешных сообщений для {original_queue}")
                 return False
             
-                         # Формирование объединенного сообщения
-             success_message = {
-                 "timestamp": original_message.get('timestamp'),
-                 "original_queue": original_queue,
-                 "original_message": original_message,
-                 "response_data": response_data,
-                 "processing_status": "success",
-                 "processed_at": time.time()
-             }
-             
-             # Добавляем timestamp если его нет
-             if not success_message["timestamp"]:
-                 success_message["timestamp"] = time.time()
+            # Формирование объединенного сообщения
+            success_message = {
+                "timestamp": original_message.get('timestamp'),
+                "original_queue": original_queue,
+                "original_message": original_message,
+                "response_data": response_data,
+                "processing_status": "success",
+                "processed_at": time.time()
+            }
+            
+            # Добавляем timestamp если его нет
+            if not success_message["timestamp"]:
+                success_message["timestamp"] = time.time()
             
             return self.publish_message(target_queue, success_message)
             

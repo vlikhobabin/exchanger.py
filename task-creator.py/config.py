@@ -226,8 +226,163 @@ class SystemsConfig:
         return systems_status
 
 
+class TrackerConfig:
+    """
+    Конфигурация tracker'ов для отслеживания задач в системах-получателях
+    """
+    
+    # Маппинг sent очередей на модули tracker'ов
+    TRACKER_HANDLERS: Dict[str, Dict[str, str]] = {
+        "bitrix24.sent.queue": {
+            "module": "consumers.bitrix",
+            "tracker_class": "BitrixTaskTracker",
+            "description": "Отслеживание задач в Bitrix24",
+            "target_queue": "camunda.responses.queue"
+        },
+        "openproject.sent.queue": {
+            "module": "consumers.openproject", 
+            "tracker_class": "OpenProjectTaskTracker",
+            "description": "Отслеживание задач в OpenProject",
+            "target_queue": "camunda.responses.queue"
+        },
+        "1c.sent.queue": {
+            "module": "consumers.1c",
+            "tracker_class": "OneСTaskTracker", 
+            "description": "Отслеживание задач в 1C",
+            "target_queue": "camunda.responses.queue"
+        },
+        "python-services.sent.queue": {
+            "module": "consumers.python",
+            "tracker_class": "PythonServiceTracker",
+            "description": "Отслеживание Python сервисов",
+            "target_queue": "camunda.responses.queue"
+        },
+        "default.sent.queue": {
+            "module": "consumers.default",
+            "tracker_class": "DefaultTaskTracker",
+            "description": "Отслеживание задач по умолчанию",
+            "target_queue": "camunda.responses.queue"
+        }
+    }
+    
+    @classmethod
+    def get_tracker_info(cls, sent_queue: str) -> Optional[Dict[str, str]]:
+        """
+        Получить информацию о tracker'е для очереди отправленных сообщений
+        
+        Args:
+            sent_queue: Имя очереди отправленных сообщений
+            
+        Returns:
+            Словарь с информацией о модуле и классе tracker'а
+        """
+        return cls.TRACKER_HANDLERS.get(sent_queue)
+    
+    @classmethod
+    def get_all_sent_queues(cls) -> List[str]:
+        """Получить список всех sent очередей для отслеживания"""
+        return list(cls.TRACKER_HANDLERS.keys())
+    
+    @classmethod
+    def get_active_trackers(cls) -> List[str]:
+        """
+        Получить список активных tracker'ов (тех, для которых реализованы классы)
+        
+        Returns:
+            Список имен sent очередей
+        """
+        active_trackers = []
+        for sent_queue, tracker_info in cls.TRACKER_HANDLERS.items():
+            try:
+                # Попытка импорта модуля для проверки что он существует
+                module_name = tracker_info["module"]
+                module = __import__(module_name, fromlist=[tracker_info["tracker_class"]])
+                # Проверяем, что класс tracker'а существует
+                if hasattr(module, tracker_info["tracker_class"]):
+                    active_trackers.append(sent_queue)
+            except (ImportError, AttributeError):
+                # Модуль не найден или класс не существует - пропускаем этот tracker
+                continue
+        return active_trackers
+    
+    @classmethod
+    def get_tracker_module_path(cls, sent_queue: str) -> Optional[str]:
+        """Получить путь к модулю tracker'а"""
+        tracker_info = cls.get_tracker_info(sent_queue)
+        return tracker_info["module"] if tracker_info else None
+    
+    @classmethod
+    def get_tracker_class_name(cls, sent_queue: str) -> Optional[str]:
+        """Получить имя класса tracker'а"""
+        tracker_info = cls.get_tracker_info(sent_queue)
+        return tracker_info["tracker_class"] if tracker_info else None
+    
+    @classmethod
+    def get_target_queue(cls, sent_queue: str) -> Optional[str]:
+        """Получить целевую очередь для перемещения сообщений"""
+        tracker_info = cls.get_tracker_info(sent_queue)
+        return tracker_info["target_queue"] if tracker_info else None
+    
+    @classmethod
+    def add_tracker_handler(cls, sent_queue: str, module: str, tracker_class: str, 
+                           description: str = "", target_queue: str = "camunda.responses.queue"):
+        """
+        Добавить новый tracker обработчик (для динамического расширения)
+        
+        Args:
+            sent_queue: Имя sent очереди
+            module: Путь к модулю
+            tracker_class: Имя класса tracker'а
+            description: Описание tracker'а
+            target_queue: Целевая очередь для перемещения сообщений
+        """
+        cls.TRACKER_HANDLERS[sent_queue] = {
+            "module": module,
+            "tracker_class": tracker_class,
+            "description": description,
+            "target_queue": target_queue
+        }
+    
+    @classmethod
+    def get_trackers_status(cls) -> Dict[str, Dict[str, any]]:
+        """
+        Получить статус всех tracker'ов
+        
+        Returns:
+            Словарь со статусом каждого tracker'а
+        """
+        trackers_status = {}
+        
+        for sent_queue, tracker_info in cls.TRACKER_HANDLERS.items():
+            module_name = tracker_info["module"]
+            tracker_class_name = tracker_info["tracker_class"]
+            try:
+                module = __import__(module_name, fromlist=[tracker_class_name])
+                if hasattr(module, tracker_class_name):
+                    status = "active"
+                    error = None
+                else:
+                    status = "inactive"
+                    error = f"Класс {tracker_class_name} не найден в модуле {module_name}"
+            except ImportError as e:
+                status = "inactive"
+                error = str(e)
+            
+            trackers_status[sent_queue] = {
+                "module": module_name,
+                "tracker_class": tracker_class_name,
+                "description": tracker_info["description"],
+                "target_queue": tracker_info["target_queue"],
+                "status": status,
+                "error": error
+            }
+        
+        return trackers_status
+
+
 # Создание экземпляров конфигурации
 rabbitmq_config = RabbitMQConfig()
 worker_config = WorkerConfig()
 systems_config = SystemsConfig()
 sent_queues_config = SentQueuesConfig() 
+tracker_config = TrackerConfig() 
