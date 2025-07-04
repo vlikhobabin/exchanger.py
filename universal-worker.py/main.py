@@ -10,7 +10,6 @@ from loguru import logger
 
 from config import worker_config
 from camunda_worker import UniversalCamundaWorker
-from response_handler import TaskResponseHandler
 
 
 def setup_logging():
@@ -74,99 +73,71 @@ def main():
         setup_logging()
         
         logger.info("=" * 60)
-        logger.info("UNIVERSAL CAMUNDA WORKER (ASYNC MODE)")
+        logger.info("UNIVERSAL CAMUNDA WORKER (INTEGRATED MODE)")
         logger.info("=" * 60)
-        logger.info("Версия: 2.0.0")
+        logger.info("Версия: 2.1.0")
         logger.info("Автор: EG-Holding")
-        logger.info("Режим: Асинхронное завершение задач")
+        logger.info("Режим: Интегрированная обработка задач и ответов")
         logger.info("=" * 60)
         
-        # Создание компонентов
+        # Создание основного worker
         worker = UniversalCamundaWorker()
-        response_handler = TaskResponseHandler()
         
-        # Флаги для управления потоками
+        # Флаг для управления работой
         worker_running = threading.Event()
-        response_handler_running = threading.Event()
         shutdown_event = threading.Event()
         
         def run_worker():
             """Запуск основного worker в отдельном потоке"""
             try:
-                logger.info("Запуск Camunda Worker...")
+                logger.info("Запуск Universal Camunda Worker...")
                 worker_running.set()
                 worker.start()
             except Exception as e:
-                logger.error(f"Ошибка в Camunda Worker: {e}")
+                logger.error(f"Ошибка в Universal Camunda Worker: {e}")
             finally:
                 worker_running.clear()
                 shutdown_event.set()
         
-        def run_response_handler():
-            """Запуск response handler в отдельном потоке"""
-            try:
-                if not worker_config.response_handler_enabled:
-                    logger.info("Response Handler отключен в конфигурации")
-                    return
-                
-                # Ожидание инициализации основного worker
-                time.sleep(5)
-                
-                logger.info("Запуск Task Response Handler...")
-                response_handler_running.set()
-                response_handler.start()
-            except Exception as e:
-                logger.error(f"Ошибка в Response Handler: {e}")
-            finally:
-                response_handler_running.clear()
-                shutdown_event.set()
-        
-        # Запуск потоков
+        # Запуск worker
         worker_thread = threading.Thread(target=run_worker, daemon=True)
-        response_thread = threading.Thread(target=run_response_handler, daemon=True)
-        
         worker_thread.start()
-        response_thread.start()
         
-        logger.info("Оба компонента запущены")
-        logger.info("- Camunda Worker: обработка External Tasks")
-        logger.info("- Response Handler: асинхронное завершение задач")
+        logger.info("Universal Camunda Worker запущен")
+        logger.info("- External Tasks: обработка задач из Camunda")
+        logger.info("- Response Processing: встроенная обработка ответов из RabbitMQ")
+        logger.info(f"- Heartbeat Interval: {worker_config.heartbeat_interval}s")
         logger.info("Нажмите Ctrl+C для завершения")
         
         # Ожидание завершения
         try:
             while not shutdown_event.is_set():
-                # Проверка состояния потоков каждые 10 секунд
+                # Проверка состояния worker каждые 10 секунд
                 if shutdown_event.wait(10):
                     break
                 
                 # Логирование состояния
                 worker_status = "работает" if worker_running.is_set() else "остановлен"
-                handler_status = "работает" if response_handler_running.is_set() else "остановлен"
-                logger.info(f"Статус - Worker: {worker_status}, Response Handler: {handler_status}")
+                logger.info(f"Статус Worker: {worker_status}")
                 
-                # Если один из компонентов упал, завершаем всё
-                if not worker_running.is_set() and not response_handler_running.is_set():
-                    logger.error("Все компоненты остановлены, завершение приложения")
+                # Если worker упал, завершаем всё
+                if not worker_running.is_set():
+                    logger.error("Worker остановлен, завершение приложения")
                     break
                     
         except KeyboardInterrupt:
             logger.info("Получен сигнал прерывания от пользователя")
         
         # Корректное завершение
-        logger.info("Завершение работы компонентов...")
+        logger.info("Завершение работы...")
         
         if worker_running.is_set():
             worker.shutdown()
         
-        if response_handler_running.is_set():
-            response_handler.shutdown()
-        
-        # Ожидание завершения потоков
+        # Ожидание завершения потока
         worker_thread.join(timeout=10)
-        response_thread.join(timeout=10)
         
-        logger.info("Все компоненты корректно завершены")
+        logger.info("Universal Camunda Worker корректно завершен")
             
     except Exception as e:
         logger.error(f"Критическая ошибка: {e}")

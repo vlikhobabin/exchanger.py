@@ -3,17 +3,19 @@
 Universal Camunda Worker на базе ExternalTaskClient
 Stateless архитектура для обработки External Tasks
 """
+import json
 import time
 import signal
 import sys
 import threading
 import traceback
+import requests
 from typing import Dict, Any, Optional
 from loguru import logger
 
 from camunda.client.external_task_client import ExternalTaskClient
 from camunda.external_task.external_task import ExternalTask
-from config import camunda_config, worker_config, routing_config
+from config import camunda_config, worker_config, routing_config, rabbitmq_config
 from rabbitmq_client import RabbitMQClient
 from bpmn_metadata_cache import BPMNMetadataCache
 
@@ -25,6 +27,7 @@ class UniversalCamundaWorker:
         self.config = camunda_config
         self.worker_config = worker_config
         self.routing_config = routing_config
+        self.rabbitmq_config = rabbitmq_config
         
         # Компоненты
         self.client: Optional[ExternalTaskClient] = None
@@ -42,7 +45,11 @@ class UniversalCamundaWorker:
             "successful_tasks": 0,
             "failed_tasks": 0,
             "start_time": None,
-            "last_fetch": None
+            "last_fetch": None,
+            # Добавляем статистику для обработки ответов
+            "processed_responses": 0,
+            "successful_completions": 0,
+            "failed_completions": 0
         }
         
         # Настройка обработки сигналов
@@ -243,6 +250,187 @@ class UniversalCamundaWorker:
         except Exception as handle_error:
             logger.error(f"Ошибка обработки ошибки задачи {task_id}: {handle_error}")
     
+    def _check_response_queue(self):
+        """Проверка и обработка сообщений из очереди ответов"""
+        try:
+            if not self.rabbitmq_client.is_connected():
+                logger.warning("RabbitMQ соединение потеряно при проверке очереди ответов")
+                return
+            
+            # Проверяем количество сообщений в очереди ответов
+            queue_info = self.rabbitmq_client.get_queue_info(self.rabbitmq_config.responses_queue_name)
+            if not queue_info:
+                return
+            
+            message_count = queue_info.get("message_count", 0)
+            if message_count == 0:
+                return
+            
+            logger.info(f"Найдено {message_count} сообщений в очереди ответов, обрабатываем...")
+            
+            # Обрабатываем сообщения (по одному за раз)
+            processed_count = 0
+            max_messages_per_check = min(10, message_count)  # Не более 10 за раз
+            
+            for _ in range(max_messages_per_check):
+                if self._process_single_response_message():
+                    processed_count += 1
+                else:
+                    break  # Нет больше сообщений или ошибка
+            
+            if processed_count > 0:
+                logger.info(f"Обработано {processed_count} ответов из очереди")
+                
+        except Exception as e:
+            logger.error(f"Ошибка при проверке очереди ответов: {e}")
+    
+    def _process_single_response_message(self) -> bool:
+        """Обработка одного сообщения из очереди ответов"""
+        try:
+            # Получаем сообщение без автоподтверждения
+            method_frame, header_frame, body = self.rabbitmq_client.channel.basic_get(
+                queue=self.rabbitmq_config.responses_queue_name,
+                auto_ack=False
+            )
+            
+            if method_frame is None:
+                return False  # Нет сообщений
+            
+            # Парсим сообщение
+            try:
+                message_data = json.loads(body.decode('utf-8'))
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                logger.error(f"Ошибка парсинга сообщения из очереди ответов: {e}")
+                self.rabbitmq_client.channel.basic_nack(
+                    delivery_tag=method_frame.delivery_tag, 
+                    requeue=False
+                )
+                return True
+            
+            self.stats["processed_responses"] += 1
+            
+            # Обрабатываем ответное сообщение
+            success = self._process_response_message(message_data)
+            
+            # Подтверждаем или отклоняем сообщение
+            if success:
+                self.rabbitmq_client.channel.basic_ack(delivery_tag=method_frame.delivery_tag)
+                logger.debug("Сообщение из очереди ответов успешно обработано и удалено")
+            else:
+                self.rabbitmq_client.channel.basic_nack(
+                    delivery_tag=method_frame.delivery_tag, 
+                    requeue=True
+                )
+                logger.error("Ошибка обработки сообщения, возвращаем в очередь")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Ошибка при обработке сообщения из очереди ответов: {e}")
+            return False
+    
+    def _process_response_message(self, message_data: Dict[str, Any]) -> bool:
+        """Обработка ответного сообщения и завершение задачи в Camunda"""
+        try:
+            # Извлекаем данные из сообщения
+            original_message = message_data.get("original_message", {})
+            response_data = message_data.get("response_data", {})
+            processing_status = message_data.get("processing_status")
+            
+            task_id = original_message.get("task_id")
+            if not task_id:
+                logger.error("Отсутствует task_id в ответном сообщении")
+                return False
+            
+            logger.info(f"Обрабатываем ответ для задачи {task_id} (статус: {processing_status})")
+            
+            # Проверяем статус обработки
+            if processing_status != "completed":
+                logger.warning(f"Задача {task_id} имеет статус '{processing_status}', пропускаем")
+                return True  # Считаем успешным, удаляем сообщение
+            
+            # Извлекаем данные результата для передачи в Camunda
+            task_result = response_data.get("result", {}).get("task", {})
+            if not task_result:
+                logger.warning(f"Отсутствуют данные результата для задачи {task_id}")
+                # Завершаем задачу без переменных
+                return self._complete_task_in_camunda(task_id, {})
+            
+            # Подготавливаем переменные для Camunda
+            variables = {
+                "task_result": task_result,
+                "processing_status": processing_status,
+                "processed_at": message_data.get("processed_at"),
+                "original_topic": original_message.get("topic"),
+                "external_system": original_message.get("system")
+            }
+            
+            # Завершаем задачу в Camunda
+            return self._complete_task_in_camunda(task_id, variables)
+            
+        except Exception as e:
+            logger.error(f"Ошибка обработки ответного сообщения: {e}")
+            return False
+    
+    def _complete_task_in_camunda(self, task_id: str, variables: Dict[str, Any]) -> bool:
+        """Завершение задачи в Camunda через REST API"""
+        try:
+            # Формируем URL для завершения задачи
+            base_url = self.config.base_url.rstrip('/')
+            if base_url.endswith('/engine-rest'):
+                api_base_url = base_url
+            else:
+                api_base_url = f"{base_url}/engine-rest"
+            
+            url = f"{api_base_url}/external-task/{task_id}/complete"
+            
+            # Подготавливаем payload
+            payload = {
+                "workerId": self.config.worker_id,
+                "variables": self._format_variables(variables)
+            }
+            
+            # Настраиваем аутентификацию
+            auth = None
+            if self.config.auth_enabled:
+                auth = (self.config.auth_username, self.config.auth_password)
+            
+            # Отправляем запрос
+            response = requests.post(url, json=payload, auth=auth, timeout=30)
+            
+            if response.status_code == 204:
+                logger.info(f"Задача {task_id} успешно завершена в Camunda")
+                self.stats["successful_completions"] += 1
+                return True
+            else:
+                logger.error(f"Ошибка завершения задачи {task_id} в Camunda: HTTP {response.status_code} - {response.text}")
+                self.stats["failed_completions"] += 1
+                return False
+                
+        except Exception as e:
+            logger.error(f"Ошибка завершения задачи {task_id} в Camunda: {e}")
+            self.stats["failed_completions"] += 1
+            return False
+    
+    def _format_variables(self, variables: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+        """Форматирование переменных для Camunda API"""
+        formatted = {}
+        for key, value in variables.items():
+            if value is None:
+                formatted[key] = {"value": None, "type": "Null"}
+            elif isinstance(value, str):
+                formatted[key] = {"value": value, "type": "String"}
+            elif isinstance(value, bool):
+                formatted[key] = {"value": value, "type": "Boolean"}
+            elif isinstance(value, int):
+                formatted[key] = {"value": value, "type": "Long"}
+            elif isinstance(value, float):
+                formatted[key] = {"value": value, "type": "Double"}
+            else:
+                # Для сложных типов используем JSON
+                formatted[key] = {"value": json.dumps(value, ensure_ascii=False), "type": "Json"}
+        return formatted
+    
     def start(self):
         """Запуск Worker"""
         try:
@@ -298,22 +486,34 @@ class UniversalCamundaWorker:
         return True
     
     def _monitor_loop(self):
-        """Поток мониторинга статистики"""
+        """Поток мониторинга статистики и обработки ответов"""
+        last_response_check = 0
+        
         while not self.stop_event.is_set():
             try:
+                current_time = time.time()
+                
                 if self.running and self.stats["start_time"]:
-                    uptime = time.time() - self.stats["start_time"]
+                    uptime = current_time - self.stats["start_time"]
                     logger.info(
                         f"Monitor - Uptime: {uptime:.0f}s | "
                         f"Обработано: {self.stats['processed_tasks']} | "
                         f"Успешно: {self.stats['successful_tasks']} | "
-                        f"Ошибки: {self.stats['failed_tasks']}"
+                        f"Ошибки: {self.stats['failed_tasks']} | "
+                        f"Ответов: {self.stats['processed_responses']} | "
+                        f"Завершено: {self.stats['successful_completions']}"
                     )
                     
                     # Проверка соединения с RabbitMQ
                     if not self.rabbitmq_client.is_connected():
                         logger.warning("RabbitMQ соединение потеряно, попытка переподключения...")
                         self.rabbitmq_client.reconnect()
+                    
+                    # Проверка очереди ответов с интервалом heartbeat_interval
+                    if current_time - last_response_check >= self.worker_config.heartbeat_interval:
+                        logger.debug("Проверка очереди ответов...")
+                        self._check_response_queue()
+                        last_response_check = current_time
                 
                 # Мониторинг каждые 30 секунд
                 self.stop_event.wait(30)
@@ -349,7 +549,7 @@ class UniversalCamundaWorker:
         logger.info("Universal Worker завершен")
     
     def get_status(self) -> Dict[str, Any]:
-        """Получение текущего статуса Worker с информацией о кэше метаданных"""
+        """Получение текущего статуса Worker с информацией о кэше метаданных и обработке ответов"""
         uptime = time.time() - self.stats["start_time"] if self.stats["start_time"] else 0
         
         status = {
@@ -360,6 +560,7 @@ class UniversalCamundaWorker:
             "active_threads": len([t for t in self.worker_threads if t.is_alive()]),
             "topics": list(self.routing_config.TOPIC_TO_SYSTEM_MAPPING.keys()),
             "lock_duration_minutes": self.config.lock_duration / (1000 * 60),
+            "heartbeat_interval_seconds": self.worker_config.heartbeat_interval,
             "camunda_config": {
                 "base_url": self.config.base_url,
                 "worker_id": self.config.worker_id,
@@ -367,7 +568,15 @@ class UniversalCamundaWorker:
                 "lock_duration": self.config.lock_duration
             },
             "rabbitmq_connected": self.rabbitmq_client.is_connected(),
-            "queues_info": self.rabbitmq_client.get_all_queues_info()
+            "queues_info": self.rabbitmq_client.get_all_queues_info(),
+            "response_processing": {
+                "enabled": True,
+                "queue_name": self.rabbitmq_config.responses_queue_name,
+                "check_interval_seconds": self.worker_config.heartbeat_interval,
+                "processed_responses": self.stats["processed_responses"],
+                "successful_completions": self.stats["successful_completions"],
+                "failed_completions": self.stats["failed_completions"]
+            }
         }
         
         # Добавление статистики кэша метаданных BPMN
