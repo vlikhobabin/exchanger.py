@@ -180,23 +180,14 @@ class BitrixTaskHandler:
     
     def _extract_title(self, variables: Dict[str, Any], metadata: Dict[str, Any], topic: str) -> str:
         """Извлечение заголовка задачи из данных сообщения"""
-        # Попытка найти заголовок в переменных
-        title_fields = ['title', 'name', 'subject', 'task_title', 'task_name']
         
-        for field in title_fields:
-            if field in variables:
-                value = variables[field]
-                if isinstance(value, dict) and 'value' in value:
-                    return str(value['value'])
-                elif isinstance(value, str):
-                    return value
-        
-        # Попытка найти заголовок в метаданных
-        if metadata:
-            input_params = metadata.get('inputParameters', {})
-            for field in title_fields:
-                if field in input_params:
-                    return str(input_params[field])
+        # Приоритет 1: Попытка получить заголовок из activityInfo
+        if metadata and 'activityInfo' in metadata:
+            activity_info = metadata['activityInfo']
+            if isinstance(activity_info, dict) and 'name' in activity_info:
+                activity_name = activity_info['name']
+                if activity_name and isinstance(activity_name, str):
+                    return activity_name
         
         # Fallback - создание заголовка на основе топика
         topic_titles = {

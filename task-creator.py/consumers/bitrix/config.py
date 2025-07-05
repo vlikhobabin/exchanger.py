@@ -15,7 +15,7 @@ class BitrixConfig(BaseSettings):
     """Настройки Bitrix24"""
     webhook_url: str = Field(default="https://bx.eg-holding.ru/rest/1/123123123123", env="BITRIX_WEBHOOK_URL")
     default_responsible_id: int = Field(default=1, env="BITRIX_DEFAULT_RESPONSIBLE_ID")
-    default_priority: int = Field(default=2, env="BITRIX_DEFAULT_PRIORITY")  # 1-низкий, 2-обычный, 3-высокий
+    default_priority: int = Field(default=1, env="BITRIX_DEFAULT_PRIORITY")  # 1-низкий, 2-обычный, 3-высокий
     request_timeout: int = Field(default=30, env="BITRIX_REQUEST_TIMEOUT")
     max_description_length: int = Field(default=10000, env="BITRIX_MAX_DESCRIPTION_LENGTH")
     
