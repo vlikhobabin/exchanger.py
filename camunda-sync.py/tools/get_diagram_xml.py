@@ -63,23 +63,44 @@ def save_diagram_xml(diagram_id: str) -> None:
         root_path = Path(__file__).parent.parent.parent
         file_path = root_path / filename
         
-        # Сохранение файла
+        # Сохранение XML файла
         try:
             with open(file_path, 'w', encoding='utf-8') as f:
                 f.write(diagram_body)
             
             logger.info(f"✅ XML схемы сохранена в файл: {file_path}")
-            logger.info(f"📊 Информация о схеме:")
-            logger.info(f"   - Название: {diagram_name}")
-            logger.info(f"   - ID: {diagram.get('id', 'N/A')}")
-            logger.info(f"   - Статус: {diagram.get('status', 'N/A')}")
-            logger.info(f"   - Тип: {diagram.get('type', 'N/A')}")
-            logger.info(f"   - Автор: {diagram.get('authorUsername', 'N/A')}")
-            logger.info(f"   - Размер XML: {len(diagram_body)} символов")
             
         except Exception as e:
-            logger.error(f"Ошибка при сохранении файла: {e}")
+            logger.error(f"Ошибка при сохранении XML файла: {e}")
             sys.exit(1)
+        
+        # Получение и сохранение списка ответственных
+        logger.info(f"📋 Запрос списка ответственных...")
+        try:
+            assignees = client.get_diagram_assignees(diagram_id)
+            
+            # Сохранение JSON файла с ответственными
+            assignees_filename = f"{safe_filename}_assignees.json"
+            assignees_file_path = root_path / assignees_filename
+            
+            with open(assignees_file_path, 'w', encoding='utf-8') as f:
+                json.dump(assignees, f, ensure_ascii=False, indent=2)
+            
+            logger.info(f"✅ Список ответственных сохранен в файл: {assignees_file_path}")
+            logger.info(f"📊 Получено {len(assignees)} ответственных")
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Не удалось получить список ответственных: {e}")
+            logger.info("Продолжаем без списка ответственных...")
+        
+        # Итоговая информация
+        logger.info(f"📊 Информация о схеме:")
+        logger.info(f"   - Название: {diagram_name}")
+        logger.info(f"   - ID: {diagram.get('id', 'N/A')}")
+        logger.info(f"   - Статус: {diagram.get('status', 'N/A')}")
+        logger.info(f"   - Тип: {diagram.get('type', 'N/A')}")
+        logger.info(f"   - Автор: {diagram.get('authorUsername', 'N/A')}")
+        logger.info(f"   - Размер XML: {len(diagram_body)} символов")
         
     except StormBPMNNotFoundError:
         logger.error(f"❌ Схема с ID '{diagram_id}' не найдена")

@@ -7,6 +7,7 @@
 
 import sys
 import os
+import json
 from pathlib import Path
 
 # Добавляем родительскую директорию в путь для импорта
@@ -46,9 +47,30 @@ def main():
         print(f"   Продолжаем обработку...")
     
     try:
+        # Ищем JSON файл с ответственными
+        assignees_data = None
+        input_path = Path(input_file)
+        
+        # Формируем имя JSON файла: берем имя BPMN файла и добавляем суффикс _assignees.json
+        base_name = input_path.stem  # имя без расширения
+        assignees_json_path = input_path.parent / f"{base_name}_assignees.json"
+        
+        if assignees_json_path.exists():
+            try:
+                print(f"📋 Найден файл с ответственными: {assignees_json_path}")
+                with open(assignees_json_path, 'r', encoding='utf-8') as f:
+                    assignees_data = json.load(f)
+                print(f"   ✅ Загружено {len(assignees_data)} ответственных")
+            except Exception as e:
+                print(f"   ⚠️ Ошибка при загрузке ответственных: {e}")
+                print(f"   Продолжаем конвертацию без ответственных...")
+        else:
+            print(f"📋 Файл с ответственными не найден: {assignees_json_path}")
+            print(f"   Продолжаем конвертацию без ответственных...")
+        
         # Запускаем конвертацию
         converter = BPMNConverter()
-        output_file = converter.convert_file(input_file)
+        output_file = converter.convert_file(input_file, assignees_data)
         
         print(f"\n🎉 Конвертация завершена успешно!")
         print(f"📁 Исходный файл: {input_file}")

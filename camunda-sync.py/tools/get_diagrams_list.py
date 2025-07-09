@@ -5,7 +5,12 @@
 """
 import json
 import sys
+import os
 from loguru import logger
+
+# Добавляем родительскую папку в путь для импорта
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from stormbpmn_client import StormBPMNClient, StormBPMNAuthError
 
 # Простое логирование

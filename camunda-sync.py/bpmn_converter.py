@@ -49,9 +49,14 @@ class BPMNConverter:
         self.removed_elements: Set[str] = set()
         self.removed_flows: Set[str] = set()
         
-    def convert_file(self, input_file: str) -> str:
+    def convert_file(self, input_file: str, assignees_data: Optional[List[Dict]] = None) -> str:
         """Конвертировать BPMN файл"""
         print(f"🔄 Загрузка файла: {input_file}")
+        
+        # Сохраняем данные об ответственных
+        self.assignees_data = assignees_data or []
+        if self.assignees_data:
+            print(f"📋 Загружено {len(self.assignees_data)} ответственных для встраивания")
         
         # Проверяем существование файла
         if not os.path.exists(input_file):
@@ -76,6 +81,7 @@ class BPMNConverter:
         self._remove_collaboration_section(root)
         self._remove_intermediate_events(root)
         self._convert_tasks_to_service_tasks(root)
+        self._add_assignee_properties(root)
         self._add_condition_expressions(root)
         self._fix_element_order(root)
         self._fix_default_flows(root)
@@ -356,6 +362,81 @@ class BPMNConverter:
                     converted_count += 1
         
         print(f"✅ Конвертировано {converted_count} задач")
+    
+    def _add_assignee_properties(self, root):
+        """Добавить свойства ответственных к serviceTask элементам"""
+        if not self.assignees_data:
+            print("📋 Данные об ответственных отсутствуют, пропускаем встраивание")
+            return
+        
+        print("🔧 Встраивание ответственных в serviceTask элементы...")
+        
+        added_count = 0
+        
+        # Создаем словарь для быстрого поиска ответственных по elementId
+        assignees_by_element = {}
+        for assignee in self.assignees_data:
+            element_id = assignee.get('elementId')
+            if element_id:
+                if element_id not in assignees_by_element:
+                    assignees_by_element[element_id] = []
+                assignees_by_element[element_id].append(assignee)
+        
+        print(f"   📊 Найдено ответственных для {len(assignees_by_element)} элементов")
+        
+        # Обрабатываем все serviceTask элементы
+        for service_task in root.findall('.//bpmn:serviceTask', self.namespaces):
+            task_id = service_task.get('id')
+            
+            if task_id and task_id in assignees_by_element:
+                assignees_list = assignees_by_element[task_id]
+                
+                # Берем первого ответственного (обычно один на элемент)
+                assignee = assignees_list[0]
+                assignee_name = assignee.get('assigneeName', '')
+                assignee_id = str(assignee.get('assigneeId', ''))
+                
+                if assignee_name and assignee_id:
+                    # Ищем или создаем extensionElements
+                    extension_elements = service_task.find('bpmn:extensionElements', self.namespaces)
+                    if extension_elements is None:
+                        extension_elements = ET.SubElement(
+                            service_task, 
+                            f'{{{self.namespaces["bpmn"]}}}extensionElements'
+                        )
+                    
+                    # Ищем или создаем camunda:properties
+                    properties = extension_elements.find('camunda:properties', self.namespaces)
+                    if properties is None:
+                        properties = ET.SubElement(
+                            extension_elements,
+                            f'{{{self.namespaces["camunda"]}}}properties'
+                        )
+                    
+                    # Добавляем свойство assigneeName
+                    assignee_name_prop = ET.SubElement(
+                        properties,
+                        f'{{{self.namespaces["camunda"]}}}property'
+                    )
+                    assignee_name_prop.set('name', 'assigneeName')
+                    assignee_name_prop.set('value', assignee_name)
+                    
+                    # Добавляем свойство assigneeId
+                    assignee_id_prop = ET.SubElement(
+                        properties,
+                        f'{{{self.namespaces["camunda"]}}}property'
+                    )
+                    assignee_id_prop.set('name', 'assigneeId')
+                    assignee_id_prop.set('value', assignee_id)
+                    
+                    print(f"   ✅ Добавлен ответственный для {task_id}: {assignee_name} ({assignee_id})")
+                    added_count += 1
+                    
+                    # Если есть несколько ответственных, предупреждаем
+                    if len(assignees_list) > 1:
+                        print(f"   ⚠️ Элемент {task_id} имеет {len(assignees_list)} ответственных, добавлен только первый")
+        
+        print(f"✅ Встроено {added_count} ответственных")
     
     def _add_condition_expressions(self, root):
         """Добавить условные выражения к потокам"""

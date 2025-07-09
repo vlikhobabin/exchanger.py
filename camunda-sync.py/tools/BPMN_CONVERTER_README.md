@@ -16,10 +16,11 @@
 6. **Преобразует задачи в serviceTask** (все типы: `userTask`, `manualTask`, `callActivity` и др.)
    - Добавляет атрибуты: `camunda:type="external"`, `camunda:topic="bitrix_create_task"`
 7. **Добавляет условные выражения** к потокам с названиями "да"/"нет"
-8. **Исправляет порядок элементов** внутри BPMN узлов согласно спецификации
-9. **Устраняет конфликты default flow** в эксклюзивных шлюзах
-10. **Очищает диаграммные элементы** для удаленных объектов
-11. **Сохраняет форматирование** и читаемость XML
+8. **Встраивает ответственных** в serviceTask как camunda:properties (если есть JSON файл)
+9. **Исправляет порядок элементов** внутри BPMN узлов согласно спецификации
+10. **Устраняет конфликты default flow** в эксклюзивных шлюзах
+11. **Очищает диаграммные элементы** для удаленных объектов
+12. **Сохраняет форматирование** и читаемость XML
 
 ### ❌ Что НЕ изменяется:
 
@@ -96,6 +97,38 @@ camunda-sync.py/
 - `camunda:historyTimeToLive="1"` в процесс  
 - `camunda:type="external"` и `camunda:topic="bitrix_create_task"` в serviceTask
 - `<bpmn:conditionExpression>` для потоков "да"/"нет"
+- `<camunda:properties>` с информацией об ответственных в serviceTask
+
+### Встраивание ответственных
+
+Если рядом с BPMN файлом найден JSON файл с ответственными (с суффиксом `_assignees.json`), конвертер автоматически встраивает информацию об ответственных в соответствующие serviceTask элементы.
+
+**Пример встраивания:**
+```xml
+<bpmn:serviceTask id="Activity_14qyrmj" name="Отправить сообщение" camunda:type="external" camunda:topic="bitrix_create_task">
+  <bpmn:extensionElements>
+    <camunda:properties>
+      <camunda:property name="assigneeName" value="Рук.отд. инж.коммуникаций" />
+      <camunda:property name="assigneeId" value="15299256" />
+    </camunda:properties>
+  </bpmn:extensionElements>
+  <bpmn:incoming>Flow_1</bpmn:incoming>
+  <bpmn:outgoing>Flow_2</bpmn:outgoing>
+</bpmn:serviceTask>
+```
+
+**Логика встраивания:**
+1. Анализируется JSON файл с ответственными
+2. Для каждого ответственного находится соответствующий serviceTask по `elementId`
+3. Создается (или дополняется) секция `<bpmn:extensionElements>`
+4. Добавляется `<camunda:properties>` с двумя свойствами:
+   - `assigneeName` - имя ответственного
+   - `assigneeId` - ID ответственного
+
+**Примечания:**
+- Если для элемента назначено несколько ответственных, встраивается только первый
+- Если JSON файл не найден, конвертация продолжается без ответственных
+- Если есть ошибки в JSON файле, они логируются, но не прерывают конвертацию
 
 ### Логика перенаправления потоков
 
