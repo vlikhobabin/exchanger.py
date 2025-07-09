@@ -19,6 +19,14 @@ camunda-external-task-client-python3==4.5.0
 # schedule==1.2.0
 # croniter==1.4.1
 
+# Camunda-StormBPMN Sync Module dependencies
+lxml>=4.9.0
+aiohttp>=3.8.0
+asyncio-throttle>=1.0.0
+prometheus-client>=0.17.0
+python-dateutil>=2.8.0
+tenacity>=8.2.0
+
 # Development dependencies (опционально)
 # pytest==7.4.3
 # pytest-asyncio==0.21.1
