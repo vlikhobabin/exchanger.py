@@ -1,0 +1,64 @@
+# Пример конфигурационного файла для запуска процессов Camunda
+# Файл: process_config_example.yaml
+# 
+# Описание полей:
+# - process_key: (обязательное) Ключ процесса в Camunda
+# - version: (опционально) Версия процесса (по умолчанию - последняя)
+# - business_key: (опционально) Бизнес-ключ для экземпляра процесса
+# - description: (опционально) Описание конфигурации (только для документации)
+# - variables: (опционально) Переменные процесса
+
+# =============================================================================
+# БАЗОВЫЙ ПРИМЕР
+# =============================================================================
+
+# Обязательный параметр - ключ процесса
+process_key: "Process_1d4oa6g46" # Разработка и получение разрешительной документации
+
+# Опциональные параметры
+# version: 2
+# business_key: "ORDER-12345"
+# description: "Конфигурация для тестового процесса обработки заказа"
+
+# Переменные процесса
+variables:
+  projectId: "2"
+  projectManagerId: "3"
+  demolition: "no"
+
+#   # Простые типы данных (автоматическое определение типа)
+#   userName: "John Doe"              # String
+#   amount: 100                       # Integer  
+#   price: 99.99                      # Double
+#   approved: true                    # Boolean
+  
+#   # Переменные с явным указанием типа (формат Camunda)
+#   creditor:
+#     value: "Niall"
+#     type: "String"
+  
+#   invoiceNumber:
+#     value: "123"
+#     type: "String"
+    
+  # Простые переменные без указания типа (будут обработаны автоматически)
+  # projectId: "2"
+  # projectManagerId: "3"
+  # projectProperty: "no"
+  
+  # JSON объекты и массивы
+  # orderDetails:
+  #   - item: "laptop"
+  #     quantity: 1
+  #     price: 1200.00
+  #   - item: "mouse"
+  #     quantity: 2
+  #     price: 25.50
+  
+  # customerInfo:
+  #   name: "Jane Smith"
+  #   email: "jane@example.com"
+  #   address:
+  #     street: "123 Main St"
+  #     city: "New York"
+  #     zipCode: "10001"

@@ -19,6 +19,10 @@ class BitrixConfig(BaseSettings):
     request_timeout: int = Field(default=30, env="BITRIX_REQUEST_TIMEOUT")
     max_description_length: int = Field(default=10000, env="BITRIX_MAX_DESCRIPTION_LENGTH")
     
+    # Настройки кеширования соответствий ролей
+    roles_iblock_id: int = Field(default=17, env="BITRIX_ROLES_IBLOCK_ID")  # Не используется (оставлено для совместимости)
+    roles_cache_ttl: int = Field(default=3600, env="BITRIX_ROLES_CACHE_TTL")  # секунды
+    
     class Config:
         env_prefix = "BITRIX_"
 
@@ -54,3 +58,10 @@ SUPPORTED_TOPICS: List[str] = [
 # Создание экземпляров конфигурации
 bitrix_config = BitrixConfig()
 worker_config = WorkerConfig() 
+
+# Настройки для соответствий ролей
+roles_iblock_id = bitrix_config.roles_iblock_id  # Не используется
+roles_cache_ttl = bitrix_config.roles_cache_ttl
+
+# Файл соответствий ролей (основной способ)
+roles_mapping_file = os.getenv('BITRIX_ROLES_MAPPING_FILE', 'roles_mapping.json') 

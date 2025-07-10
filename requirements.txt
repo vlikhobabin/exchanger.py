@@ -8,6 +8,7 @@ pydantic-settings==2.10.1
 requests==2.32.4
 loguru==0.7.3
 python-dotenv==1.1.1
+PyYAML==6.0.1
 
 # Universal Worker specific
 camunda-external-task-client-python3==4.5.0

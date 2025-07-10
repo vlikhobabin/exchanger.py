@@ -2,12 +2,14 @@
 """
 Сервисный скрипт для запуска экземпляров процессов в Camunda
 Использует Camunda REST API для создания новых экземпляров процессов по ключу
+Поддерживает запуск с параметрами из YAML-файла конфигурации
 """
 
 import argparse
 import json
 import sys
 import urllib3
+import yaml
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 import requests
@@ -174,6 +176,85 @@ def parse_variables(variables_str: str) -> Dict[str, Any]:
         return variables
 
 
+def load_config_from_yaml(config_file: str) -> Dict[str, Any]:
+    """Загрузить конфигурацию процесса из YAML файла"""
+    try:
+        with open(config_file, 'r', encoding='utf-8') as file:
+            config = yaml.safe_load(file)
+            
+        # Валидация обязательных полей
+        if not config:
+            raise ValueError("Конфигурационный файл пуст")
+            
+        if 'process_key' not in config:
+            raise ValueError("В конфигурации отсутствует обязательное поле 'process_key'")
+            
+        return config
+        
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Конфигурационный файл '{config_file}' не найден")
+    except yaml.YAMLError as e:
+        raise ValueError(f"Ошибка парсинга YAML файла: {e}")
+    except Exception as e:
+        raise ValueError(f"Ошибка загрузки конфигурации: {e}")
+
+
+def convert_yaml_variables_to_camunda_format(variables: Dict[str, Any]) -> Dict[str, Any]:
+    """Конвертировать переменные из YAML в формат Camunda"""
+    if not variables:
+        return {}
+        
+    camunda_variables = {}
+    
+    for key, value in variables.items():
+        # Если значение уже в формате Camunda (объект с 'value' и 'type')
+        if isinstance(value, dict) and 'value' in value and 'type' in value:
+            camunda_variables[key] = value
+        # Если значение - простой тип, автоматически определяем тип
+        elif isinstance(value, bool):
+            camunda_variables[key] = {"value": value, "type": "Boolean"}
+        elif isinstance(value, int):
+            camunda_variables[key] = {"value": value, "type": "Integer"}
+        elif isinstance(value, float):
+            camunda_variables[key] = {"value": value, "type": "Double"}
+        elif isinstance(value, str):
+            camunda_variables[key] = {"value": value, "type": "String"}
+        elif isinstance(value, (dict, list)):
+            camunda_variables[key] = {"value": json.dumps(value), "type": "Json"}
+        else:
+            # Для всех остальных типов конвертируем в строку
+            camunda_variables[key] = {"value": str(value), "type": "String"}
+    
+    return camunda_variables
+
+
+def print_config_info(config: Dict[str, Any]):
+    """Вывести информацию о загруженной конфигурации"""
+    print("\n" + "="*80)
+    print("📄 КОНФИГУРАЦИЯ ИЗ YAML")
+    print("="*80)
+    
+    print(f"Ключ процесса: {config.get('process_key')}")
+    
+    if config.get('version'):
+        print(f"Версия: {config.get('version')}")
+    
+    if config.get('business_key'):
+        print(f"Business Key: {config.get('business_key')}")
+    
+    if config.get('description'):
+        print(f"Описание: {config.get('description')}")
+    
+    variables = config.get('variables', {})
+    if variables:
+        print(f"\nПеременные ({len(variables)}):")
+        for key, value in variables.items():
+            if isinstance(value, dict) and 'value' in value:
+                print(f"   {key}: {value['value']} ({value.get('type', 'Unknown')})")
+            else:
+                print(f"   {key}: {value} ({type(value).__name__})")
+
+
 def print_process_definition_info(definition: Dict):
     """Вывести информацию об определении процесса"""
     print("\n" + "="*80)
@@ -261,6 +342,12 @@ def main():
   # Запуск конкретной версии процесса
   python start_process.py TestProcess --version 2 --variables "userName=Jane"
 
+  # Запуск с YAML конфигурацией
+  python start_process.py --config process_config.yaml
+
+  # Запуск с YAML конфигурацией и переопределением параметров
+  python start_process.py --config process_config.yaml --business-key "OVERRIDE-123"
+
   # Показать информацию о процессе без запуска
   python start_process.py TestProcess --info
 
@@ -272,11 +359,15 @@ def main():
   - Числа: "amount=100" 
   - Булевы: "approved=true"
   - JSON: "data={\"key\": \"value\"}"
+
+YAML конфигурация:
+  При использовании --config можно не указывать process_key в командной строке.
+  Все параметры из командной строки имеют приоритет над параметрами из YAML.
         """
     )
     
-    parser.add_argument('process_key', 
-                       help='Ключ процесса для запуска (например, TestProcess)')
+    parser.add_argument('process_key', nargs='?',
+                       help='Ключ процесса для запуска (например, TestProcess). Необязательно при использовании --config')
     parser.add_argument('--variables', '-v',
                        help='Переменные для процесса в JSON формате или key=value пары')
     parser.add_argument('--business-key', '-b',
@@ -289,6 +380,8 @@ def main():
                        help='Показать все версии процесса')
     parser.add_argument('--dry-run', action='store_true',
                        help='Показать что будет отправлено без фактического запуска')
+    parser.add_argument('--config', '-c',
+                       help='Файл конфигурации YAML для запуска процесса')
     
     args = parser.parse_args()
     
@@ -298,15 +391,35 @@ def main():
         print(f"🔗 Подключение к Camunda: {service.base_url}")
         print(f"🔐 Аутентификация: {'Включена' if service.auth else 'Отключена'}")
         
+        # Загрузка конфигурации из YAML файла
+        config = {}
+        if args.config:
+            print(f"📄 Загрузка конфигурации из {args.config}...")
+            config = load_config_from_yaml(args.config)
+            print_config_info(config)
+            
+            # Если process_key не указан в командной строке, берем из конфигурации
+            if not hasattr(args, 'process_key') or not args.process_key:
+                args.process_key = config.get('process_key')
+        
+        # Проверяем, что process_key определен
+        if not args.process_key:
+            print("❌ Не указан ключ процесса. Укажите в командной строке или в файле конфигурации")
+            sys.exit(1)
+        
+        # Мергим параметры из YAML с параметрами командной строки (приоритет у командной строки)
+        final_business_key = args.business_key or config.get('business_key')
+        final_version = args.version or config.get('version')
+        
         # Показать все версии процесса
         if args.list_versions:
             list_process_versions(service, args.process_key)
             return
         
         # Получить информацию о процессе
-        if args.version:
-            print(f"🔍 Поиск процесса '{args.process_key}' версии {args.version}...")
-            endpoint = f"process-definition/key/{args.process_key}/version/{args.version}"
+        if final_version:
+            print(f"🔍 Поиск процесса '{args.process_key}' версии {final_version}...")
+            endpoint = f"process-definition/key/{args.process_key}/version/{final_version}"
             definition = service._make_request("GET", endpoint)
         else:
             print(f"🔍 Поиск процесса '{args.process_key}'...")
@@ -336,20 +449,46 @@ def main():
         
         # Парсинг переменных
         variables = {}
+        
+        # Сначала загружаем переменные из конфигурации
+        if config.get('variables'):
+            variables = convert_yaml_variables_to_camunda_format(config.get('variables'))
+        
+        # Затем добавляем/переопределяем переменными из командной строки (приоритет у командной строки)
         if args.variables:
             try:
-                variables = parse_variables(args.variables)
-                print(f"\n📝 Переменные для запуска:")
-                for key, value in variables.items():
-                    print(f"   {key}: {value} ({type(value).__name__})")
+                cmd_variables = parse_variables(args.variables)
+                # Конвертируем переменные из командной строки в формат Camunda
+                for key, value in cmd_variables.items():
+                    if isinstance(value, bool):
+                        variables[key] = {"value": value, "type": "Boolean"}
+                    elif isinstance(value, int):
+                        variables[key] = {"value": value, "type": "Integer"}
+                    elif isinstance(value, float):
+                        variables[key] = {"value": value, "type": "Double"}
+                    elif isinstance(value, str):
+                        variables[key] = {"value": value, "type": "String"}
+                    elif isinstance(value, (dict, list)):
+                        variables[key] = {"value": json.dumps(value), "type": "Json"}
+                    else:
+                        variables[key] = {"value": str(value), "type": "String"}
             except Exception as e:
                 print(f"❌ Ошибка при парсинге переменных: {e}")
                 print("Пример правильного формата: 'userName=John,amount=100' или '{\"userName\": \"John\"}'")
                 sys.exit(1)
         
+        # Показать итоговые переменные
+        if variables:
+            print(f"\n📝 Итоговые переменные для запуска:")
+            for key, variable_obj in variables.items():
+                if isinstance(variable_obj, dict) and 'value' in variable_obj:
+                    print(f"   {key}: {variable_obj['value']} ({variable_obj.get('type', 'String')})")
+                else:
+                    print(f"   {key}: {variable_obj} ({type(variable_obj).__name__})")
+        
         # Business key
-        if args.business_key:
-            print(f"\n🔑 Business Key: {args.business_key}")
+        if final_business_key:
+            print(f"\n🔑 Business Key: {final_business_key}")
         
         # Dry run - показать что будет отправлено
         if args.dry_run:
@@ -357,14 +496,14 @@ def main():
             start_data = {}
             if variables:
                 start_data["variables"] = variables
-            if args.business_key:
-                start_data["businessKey"] = args.business_key
+            if final_business_key:
+                start_data["businessKey"] = final_business_key
             print(json.dumps(start_data, indent=2, ensure_ascii=False))
             return
         
         # Подтверждение запуска
         print(f"\n🚀 Готов к запуску процесса '{args.process_key}'")
-        if not args.variables and not args.business_key:
+        if not variables and not final_business_key and not args.config:
             response = input("Запустить процесс? (Y/n): ")
             if response.lower() == 'n':
                 print("Операция отменена")
@@ -372,11 +511,20 @@ def main():
         
         # Запуск процесса
         print(f"\n⏳ Запуск процесса...")
+        # Конвертируем переменные обратно в простой формат для функции start_process_by_key
+        simple_variables = {}
+        if variables:
+            for key, variable_obj in variables.items():
+                if isinstance(variable_obj, dict) and 'value' in variable_obj:
+                    simple_variables[key] = variable_obj['value']
+                else:
+                    simple_variables[key] = variable_obj
+        
         instance = service.start_process_by_key(
             args.process_key, 
-            variables=variables,
-            business_key=args.business_key,
-            version=args.version
+            variables=simple_variables,
+            business_key=final_business_key,
+            version=final_version
         )
         
         if not instance:

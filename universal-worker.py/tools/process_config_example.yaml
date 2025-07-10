@@ -1,0 +1,128 @@
+# Пример конфигурационного файла для запуска процессов Camunda
+# Файл: process_config_example.yaml
+# 
+# Описание полей:
+# - process_key: (обязательное) Ключ процесса в Camunda
+# - version: (опционально) Версия процесса (по умолчанию - последняя)
+# - business_key: (опционально) Бизнес-ключ для экземпляра процесса
+# - description: (опционально) Описание конфигурации (только для документации)
+# - variables: (опционально) Переменные процесса
+
+# =============================================================================
+# БАЗОВЫЙ ПРИМЕР
+# =============================================================================
+
+# Обязательный параметр - ключ процесса
+process_key: "TestProcess"
+
+# Опциональные параметры
+version: 2
+business_key: "ORDER-12345"
+description: "Конфигурация для тестового процесса обработки заказа"
+
+# Переменные процесса
+variables:
+  # Простые типы данных (автоматическое определение типа)
+  userName: "John Doe"              # String
+  amount: 100                       # Integer  
+  price: 99.99                      # Double
+  approved: true                    # Boolean
+  
+  # Переменные с явным указанием типа (формат Camunda)
+  creditor:
+    value: "Niall"
+    type: "String"
+  
+  invoiceNumber:
+    value: "123"
+    type: "String"
+    
+  # Простые переменные без указания типа (будут обработаны автоматически)
+  projectId: "2"
+  projectManagerId: "3"
+  projectProperty: "no"
+  
+  # JSON объекты и массивы
+  orderDetails:
+    - item: "laptop"
+      quantity: 1
+      price: 1200.00
+    - item: "mouse"
+      quantity: 2
+      price: 25.50
+  
+  customerInfo:
+    name: "Jane Smith"
+    email: "jane@example.com"
+    address:
+      street: "123 Main St"
+      city: "New York"
+      zipCode: "10001"
+
+# =============================================================================
+# ДОПОЛНИТЕЛЬНЫЕ ПРИМЕРЫ КОНФИГУРАЦИЙ
+# =============================================================================
+
+---
+# Минимальная конфигурация
+process_key: "SimpleProcess"
+
+---
+# Конфигурация для процесса с комплексными переменными
+process_key: "PaymentProcess"
+business_key: "PAY-2024-001"
+variables:
+  # Переменные с явным типом
+  paymentAmount:
+    value: "1500.00"
+    type: "String"
+  
+  currency:
+    value: "USD"
+    type: "String"
+    
+  # Булева переменная
+  requiresApproval: true
+  
+  # JSON данные для сложных структур
+  paymentDetails:
+    paymentMethod: "credit_card"
+    cardLastFour: "1234"
+    expiryDate: "12/25"
+    billingAddress:
+      country: "USA"
+      state: "NY"
+      
+  # Массив значений
+  approvers:
+    - "manager@company.com"
+    - "finance@company.com"
+
+---
+# Конфигурация для процесса разработки (как в примере пользователя)
+process_key: "DevelopmentProcess"
+version: 1
+business_key: "DEV-2024-001"
+description: "Процесс разработки и получения разрешительной документации"
+variables:
+  creditor:
+    value: "Niall"
+    type: "String"
+  amount:
+    value: "100"
+    type: "String"
+  invoiceNumber:
+    value: "123"
+    type: "String"
+  projectId: "2"
+  projectManagerId: "3"
+  projectProperty: "no"
+  
+  # Дополнительные переменные для процесса разработки
+  documentType: "technical_specification"
+  priority: "high"
+  deadline: "2024-12-31"
+  assignedTeam:
+    - "developer1@company.com"
+    - "developer2@company.com"
+    - "qa@company.com" 
