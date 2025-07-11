@@ -147,6 +147,10 @@ class BitrixTaskHandler:
             # Добавление дополнительных полей из метаданных
             additional_fields = self._extract_additional_fields(variables, metadata)
             task_data.update(additional_fields)
+
+            # Добавление пользовательских полей UF_ из метаданных
+            user_fields = self._extract_user_fields(metadata)
+            task_data.update(user_fields)
             
             # Подготовка данных для отправки
             payload = {'fields': task_data}
@@ -472,6 +476,62 @@ class BitrixTaskHandler:
                     additional_fields[bitrix_field] = value
         
         return additional_fields
+    
+    def _extract_user_fields(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Извлечение пользовательских полей UF_ из метаданных
+        
+        Args:
+            metadata: Метаданные сообщения из RabbitMQ
+            
+        Returns:
+            Словарь с пользовательскими полями для Bitrix24
+        """
+        user_fields = {}
+        
+        # Получаем extensionProperties из метаданных
+        extension_properties = metadata.get("extensionProperties", {})
+        
+        # Список поддерживаемых пользовательских полей для задач
+        supported_user_fields = [
+            "UF_RESULT_EXPECTED",
+            "UF_RESULT_QUESTION"
+        ]
+        
+        # Извлекаем поддерживаемые пользовательские поля
+        for field_name in supported_user_fields:
+            if field_name in extension_properties:
+                field_value = extension_properties[field_name]
+                
+                # Обработка различных типов значений
+                if field_value is not None:
+                    # Для поля UF_RESULT_EXPECTED преобразуем строку в булево значение
+                    if field_name == "UF_RESULT_EXPECTED":
+                        if isinstance(field_value, str):
+                            # Битрикс ожидает 'Y' или 'N' для булевых полей
+                            user_fields[field_name] = 'Y' if field_value.lower() in ['true', '1', 'да', 'yes'] else 'N'
+                        elif isinstance(field_value, bool):
+                            user_fields[field_name] = 'Y' if field_value else 'N'
+                        else:
+                            user_fields[field_name] = 'N'  # По умолчанию
+                    
+                    # Для текстовых полей передаем как есть
+                    elif field_name == "UF_RESULT_QUESTION":
+                        if isinstance(field_value, str) and field_value.strip():
+                            user_fields[field_name] = field_value.strip()
+                    
+                    # Для других полей передаем строковое представление
+                    else:
+                        user_fields[field_name] = str(field_value)
+                        
+                    logger.debug(f"Извлечено пользовательское поле: {field_name}={user_fields.get(field_name)}")
+        
+        if user_fields:
+            logger.info(f"Извлечено {len(user_fields)} пользовательских полей: {list(user_fields.keys())}")
+        else:
+            logger.debug("Пользовательские поля UF_ в метаданных не найдены")
+        
+        return user_fields
     
     def _send_success_message(self, original_message: Dict[str, Any], 
                              bitrix_response: Dict[str, Any], original_queue: str) -> bool:
