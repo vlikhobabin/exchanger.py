@@ -101,7 +101,7 @@ pip install -r requirements.txt
 CAMUNDA_BASE_URL=https://your-camunda-server.com/engine-rest
 CAMUNDA_WORKER_ID=universal-worker
 CAMUNDA_MAX_TASKS=10
-CAMUNDA_LOCK_DURATION=600000
+CAMUNDA_LOCK_DURATION=31536000000
 CAMUNDA_AUTH_USERNAME=your_username
 CAMUNDA_AUTH_PASSWORD=your_password
 
@@ -166,7 +166,7 @@ journalctl -u camunda-worker -f
 | `CAMUNDA_BASE_URL` | URL REST API Camunda | `https://camunda.example.com/engine-rest` |
 | `CAMUNDA_WORKER_ID` | Идентификатор Worker | `universal-worker` |
 | `CAMUNDA_MAX_TASKS` | Максимум задач за запрос | `10` |
-| `CAMUNDA_LOCK_DURATION` | Время блокировки (мс) | `600000` (10 мин) |
+| `CAMUNDA_LOCK_DURATION` | Время блокировки (мс) | `31536000000` (1 год) |
 | `RABBITMQ_HOST` | Хост RabbitMQ | `localhost` |
 | `RABBITMQ_PORT` | Порт RabbitMQ | `5672` |
 | `BPMN_CACHE_TTL_HOURS` | TTL кэша метаданных (часы) | `24` |

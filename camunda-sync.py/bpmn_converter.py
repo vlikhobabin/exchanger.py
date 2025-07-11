@@ -75,6 +75,23 @@ class BPMNConverter:
         
         print("✅ Файл загружен успешно")
         
+        # Определяем ID процесса и загружаем расширения
+        process_id = self._get_process_id(root)
+        extension_module = None
+        
+        if process_id:
+            extension_module = self._load_process_extension(process_id)
+        
+        # Выполняем предобработку (если есть расширение)
+        if extension_module:
+            try:
+                print("🔧 Выполнение предобработки расширения...")
+                extension_module.pre_process(root, self)
+                print("✅ Предобработка расширения завершена")
+            except Exception as e:
+                print(f"⚠️ Ошибка при выполнении предобработки: {e}")
+                print("Продолжаем стандартную обработку...")
+        
         # Применяем трансформации
         self._add_camunda_namespaces(root)
         self._update_process_attributes(root)
@@ -87,6 +104,16 @@ class BPMNConverter:
         self._fix_default_flows(root)
         self._clean_diagram_elements(root)
         self._update_bpmn_plane(root)
+        
+        # Выполняем постобработку (если есть расширение)
+        if extension_module:
+            try:
+                print("🔧 Выполнение постобработки расширения...")
+                extension_module.post_process(root, self)
+                print("✅ Постобработка расширения завершена")
+            except Exception as e:
+                print(f"⚠️ Ошибка при выполнении постобработки: {e}")
+                print("Сохраняем результат...")
         
         # Сохраняем результат
         self._save_result(tree, output_file)
@@ -443,6 +470,7 @@ class BPMNConverter:
         print("🔧 Добавление условных выражений...")
         
         added_count = 0
+        updated_tasks = set()  # Отслеживание задач, к которым уже добавили свойства
         
         for flow in root.findall('.//bpmn:sequenceFlow', self.namespaces):
             name = flow.get('name', '').lower()
@@ -450,28 +478,260 @@ class BPMNConverter:
             # Проверяем, нет ли уже conditionExpression
             existing_condition = flow.find('bpmn:conditionExpression', self.namespaces)
             
-            if not existing_condition:
-                condition_expr = None
+            if not existing_condition and name in ['да', 'нет']:
+                source_ref = flow.get('sourceRef')
                 
-                if name == 'да':
-                    condition_expr = '${result == "ok"}'
-                elif name == 'нет':
-                    condition_expr = '${result != "ok"}'
-                
-                if condition_expr:
-                    # Создаем элемент conditionExpression
-                    condition_element = ET.SubElement(
-                        flow, 
-                        f'{{{self.namespaces["bpmn"]}}}conditionExpression'
-                    )
-                    condition_element.set(
-                        f'{{{self.namespaces["xsi"]}}}type',
-                        'bpmn:tFormalExpression'
-                    )
-                    condition_element.text = condition_expr
-                    added_count += 1
+                if source_ref:
+                    # Ищем serviceTask, который привел к этому шлюзу
+                    service_task_id = self._find_source_service_task(root, source_ref)
+                    
+                    if service_task_id:
+                        # Формируем условное выражение с использованием ID serviceTask
+                        if name == 'да':
+                            condition_expr = '${' + service_task_id + ' == "ok"}'
+                        elif name == 'нет':
+                            condition_expr = '${' + service_task_id + ' != "ok"}'
+                        
+                        # Создаем элемент conditionExpression
+                        condition_element = ET.SubElement(
+                            flow, 
+                            f'{{{self.namespaces["bpmn"]}}}conditionExpression'
+                        )
+                        condition_element.set(
+                            f'{{{self.namespaces["xsi"]}}}type',
+                            'bpmn:tFormalExpression'
+                        )
+                        condition_element.text = condition_expr
+                        added_count += 1
+                        
+                        print(f"   ✅ Поток {flow.get('id')} ({name}): {condition_expr}")
+                        
+                        # Добавляем свойства к исходной задаче
+                        if service_task_id not in updated_tasks:
+                            gateway_name = self._get_gateway_name(root, source_ref)
+                            if gateway_name:
+                                self._add_result_properties_to_task(root, service_task_id, gateway_name)
+                                updated_tasks.add(service_task_id)
+                                print(f"   🔧 Добавлены свойства результата к задаче {service_task_id}")
+                    else:
+                        print(f"   ⚠️ Не найден serviceTask для потока {flow.get('id')} из шлюза {source_ref}")
         
         print(f"✅ Добавлено {added_count} условных выражений")
+        print(f"✅ Обновлено {len(updated_tasks)} задач с свойствами результата")
+    
+    def _find_source_service_task(self, root, gateway_id, visited=None):
+        """Найти serviceTask, который привел к указанному шлюзу (с рекурсивным поиском)"""
+        if visited is None:
+            visited = set()
+        
+        # Защита от бесконечной рекурсии
+        if gateway_id in visited:
+            print(f"   ⚠️ Обнаружена циклическая зависимость для {gateway_id}")
+            return None
+        
+        visited.add(gateway_id)
+        
+        # Находим шлюз (inclusiveGateway или exclusiveGateway)
+        gateway = None
+        for gateway_type in ['inclusiveGateway', 'exclusiveGateway']:
+            gateway = root.find(f'.//bpmn:{gateway_type}[@id="{gateway_id}"]', self.namespaces)
+            if gateway is not None:
+                break
+        
+        if gateway is None:
+            print(f"   ⚠️ Шлюз {gateway_id} не найден")
+            return None
+        
+        # Получаем входящий поток шлюза (берем первый, если их несколько)
+        incoming_element = gateway.find('bpmn:incoming', self.namespaces)
+        if incoming_element is None:
+            print(f"   ⚠️ Входящий поток для шлюза {gateway_id} не найден")
+            return None
+        
+        incoming_flow_id = incoming_element.text
+        
+        # Находим sequenceFlow с этим ID
+        incoming_flow = root.find(f'.//bpmn:sequenceFlow[@id="{incoming_flow_id}"]', self.namespaces)
+        if incoming_flow is None:
+            print(f"   ⚠️ Входящий sequenceFlow {incoming_flow_id} не найден")
+            return None
+        
+        # Получаем sourceRef входящего потока
+        source_ref = incoming_flow.get('sourceRef')
+        if not source_ref:
+            print(f"   ⚠️ sourceRef для входящего потока {incoming_flow_id} не найден")
+            return None
+        
+        # Рекурсивно ищем ближайшую задачу
+        return self._find_task_recursively(root, source_ref, visited.copy())
+    
+    def _find_task_recursively(self, root, element_id, visited):
+        """Рекурсивно найти ближайшую задачу в цепочке элементов"""
+        
+        # Защита от бесконечной рекурсии
+        if element_id in visited:
+            print(f"   ⚠️ Обнаружена циклическая зависимость для элемента {element_id}")
+            return None
+        
+        visited.add(element_id)
+        
+        # Типы задач, которые мы принимаем как источники
+        task_types = ['task', 'serviceTask', 'userTask', 'manualTask', 'businessRuleTask',
+                     'scriptTask', 'sendTask', 'receiveTask', 'callActivity']
+        
+        # Сначала проверяем, является ли элемент задачей
+        for task_type in task_types:
+            task = root.find(f'.//bpmn:{task_type}[@id="{element_id}"]', self.namespaces)
+            if task is not None:
+                task_name = task.get('name', 'Без имени')
+                print(f"   🔍 Найдена задача {task_type} {element_id} ({task_name})")
+                return element_id
+        
+        # Если не задача, ищем элемент и определяем его тип
+        element = root.find(f'.//*[@id="{element_id}"]', self.namespaces)
+        if element is None:
+            print(f"   ❌ Элемент {element_id} не найден")
+            return None
+        
+        element_type = element.tag.split('}')[-1] if '}' in element.tag else element.tag
+        element_name = element.get('name', 'Без имени')
+        
+        print(f"   🔗 Анализируем промежуточный элемент: {element_type} {element_id} ({element_name})")
+        
+        # Обрабатываем промежуточные элементы
+        if element_type in ['inclusiveGateway', 'exclusiveGateway', 'parallelGateway']:
+            # Для шлюзов ищем их входящие потоки
+            return self._find_source_through_gateway(root, element_id, element_type, visited)
+        
+        elif element_type in ['intermediateCatchEvent', 'intermediateThrowEvent', 'startEvent']:
+            # Для событий ищем их входящие потоки
+            return self._find_source_through_event(root, element_id, element_type, visited)
+        
+        else:
+            print(f"   ⚠️ Неподдерживаемый тип элемента: {element_type}")
+            return None
+    
+    def _find_source_through_gateway(self, root, gateway_id, gateway_type, visited):
+        """Найти источник через промежуточный шлюз"""
+        
+        gateway = root.find(f'.//bpmn:{gateway_type}[@id="{gateway_id}"]', self.namespaces)
+        if gateway is None:
+            return None
+        
+        # Получаем входящие потоки
+        incoming_elements = gateway.findall('bpmn:incoming', self.namespaces)
+        
+        if not incoming_elements:
+            print(f"   ⚠️ Нет входящих потоков для {gateway_type} {gateway_id}")
+            return None
+        
+        # Для каждого входящего потока пытаемся найти задачу
+        for incoming in incoming_elements:
+            flow_id = incoming.text
+            flow = root.find(f'.//bpmn:sequenceFlow[@id="{flow_id}"]', self.namespaces)
+            
+            if flow is not None:
+                source_ref = flow.get('sourceRef')
+                if source_ref:
+                    print(f"   🔄 Рекурсивный поиск через поток {flow_id} → {source_ref}")
+                    result = self._find_task_recursively(root, source_ref, visited.copy())
+                    if result:
+                        return result
+        
+        return None
+    
+    def _find_source_through_event(self, root, event_id, event_type, visited):
+        """Найти источник через промежуточное событие"""
+        
+        event = root.find(f'.//bpmn:{event_type}[@id="{event_id}"]', self.namespaces)
+        if event is None:
+            return None
+        
+        # Получаем входящие потоки события
+        incoming_elements = event.findall('bpmn:incoming', self.namespaces)
+        
+        if not incoming_elements:
+            print(f"   ⚠️ Нет входящих потоков для {event_type} {event_id}")
+            return None
+        
+        # Берем первый входящий поток (события обычно имеют один входящий поток)
+        flow_id = incoming_elements[0].text
+        flow = root.find(f'.//bpmn:sequenceFlow[@id="{flow_id}"]', self.namespaces)
+        
+        if flow is not None:
+            source_ref = flow.get('sourceRef')
+            if source_ref:
+                print(f"   🔄 Рекурсивный поиск через событие {flow_id} → {source_ref}")
+                return self._find_task_recursively(root, source_ref, visited.copy())
+        
+        return None
+    
+    def _get_gateway_name(self, root, gateway_id):
+        """Получить name шлюза по его ID"""
+        for gateway_type in ['inclusiveGateway', 'exclusiveGateway', 'parallelGateway']:
+            gateway = root.find(f'.//bpmn:{gateway_type}[@id="{gateway_id}"]', self.namespaces)
+            if gateway is not None:
+                return gateway.get('name', '')
+        return None
+    
+    def _add_result_properties_to_task(self, root, service_task_id, gateway_name):
+        """Добавить свойства UF_RESULT_EXPECTED и UF_RESULT_QUESTION к serviceTask"""
+        
+        # Находим serviceTask
+        service_task = root.find(f'.//bpmn:serviceTask[@id="{service_task_id}"]', self.namespaces)
+        if service_task is None:
+            print(f"   ⚠️ ServiceTask {service_task_id} не найден")
+            return
+        
+        # Ищем или создаем extensionElements
+        extension_elements = service_task.find('bpmn:extensionElements', self.namespaces)
+        if extension_elements is None:
+            extension_elements = ET.SubElement(
+                service_task, 
+                f'{{{self.namespaces["bpmn"]}}}extensionElements'
+            )
+        
+        # Ищем или создаем camunda:properties
+        properties = extension_elements.find('camunda:properties', self.namespaces)
+        if properties is None:
+            properties = ET.SubElement(
+                extension_elements,
+                f'{{{self.namespaces["camunda"]}}}properties'
+            )
+        
+        # Проверяем, нет ли уже свойства UF_RESULT_EXPECTED
+        existing_expected = None
+        existing_question = None
+        for prop in properties.findall('camunda:property', self.namespaces):
+            prop_name = prop.get('name')
+            if prop_name == 'UF_RESULT_EXPECTED':
+                existing_expected = prop
+            elif prop_name == 'UF_RESULT_QUESTION':
+                existing_question = prop
+        
+        # Добавляем UF_RESULT_EXPECTED если его нет
+        if existing_expected is None:
+            result_expected_prop = ET.SubElement(
+                properties,
+                f'{{{self.namespaces["camunda"]}}}property'
+            )
+            result_expected_prop.set('name', 'UF_RESULT_EXPECTED')
+            result_expected_prop.set('value', 'true')
+        else:
+            # Обновляем существующее значение
+            existing_expected.set('value', 'true')
+        
+        # Добавляем UF_RESULT_QUESTION если его нет
+        if existing_question is None:
+            result_question_prop = ET.SubElement(
+                properties,
+                f'{{{self.namespaces["camunda"]}}}property'
+            )
+            result_question_prop.set('name', 'UF_RESULT_QUESTION')
+            result_question_prop.set('value', gateway_name)
+        else:
+            # Обновляем существующее значение
+            existing_question.set('value', gateway_name)
     
     def _fix_element_order(self, root):
         """Исправить порядок элементов внутри BPMN узлов согласно спецификации"""
@@ -720,6 +980,76 @@ class BPMNConverter:
         bpmn_plane.set('bpmnElement', process_id)
         
         print(f"✅ BPMNPlane обновлен (bpmnElement: {process_id})")
+    
+    def _get_process_id(self, root) -> Optional[str]:
+        """Извлечь ID процесса из BPMN XML"""
+        try:
+            process = root.find('.//bpmn:process', self.namespaces)
+            if process is not None:
+                process_id = process.get('id')
+                if process_id:
+                    print(f"🔍 Обнаружен процесс с ID: {process_id}")
+                    return process_id
+            print("⚠️ ID процесса не найден в BPMN схеме")
+            return None
+        except Exception as e:
+            print(f"⚠️ Ошибка при извлечении ID процесса: {e}")
+            return None
+    
+    def _load_process_extension(self, process_id: str):
+        """
+        Загрузить модуль расширения для конкретного процесса
+        
+        Args:
+            process_id: ID процесса
+            
+        Returns:
+            Модуль расширения или None если не найден
+        """
+        try:
+            import importlib.util
+            from pathlib import Path
+            
+            # Путь к файлу расширения
+            extension_path = Path(__file__).parent / "extensions" / process_id / "process_extension.py"
+            
+            if not extension_path.exists():
+                print(f"📋 Расширение для процесса {process_id} не найдено")
+                return None
+            
+            print(f"🔧 Загружаем расширение для процесса {process_id}...")
+            
+            # Динамическая загрузка модуля
+            spec = importlib.util.spec_from_file_location(
+                f"process_extension_{process_id}", 
+                extension_path
+            )
+            
+            if spec is None or spec.loader is None:
+                print(f"⚠️ Не удалось создать спецификацию для модуля {process_id}")
+                return None
+            
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            
+            # Проверяем наличие обязательных методов
+            if not hasattr(module, 'pre_process') or not hasattr(module, 'post_process'):
+                print(f"⚠️ Расширение {process_id} не содержит методов pre_process/post_process")
+                return None
+            
+            # Вывод информации о расширении (если есть)
+            if hasattr(module, 'EXTENSION_INFO'):
+                info = module.EXTENSION_INFO
+                print(f"   📋 Название: {info.get('process_name', 'Не указано')}")
+                print(f"   📦 Версия: {info.get('version', 'Не указано')}")
+                print(f"   📝 Описание: {info.get('description', 'Не указано')}")
+            
+            print(f"   ✅ Расширение загружено успешно")
+            return module
+            
+        except Exception as e:
+            print(f"⚠️ Ошибка при загрузке расширения для {process_id}: {e}")
+            return None
     
     def _save_result(self, tree, output_file):
         """Сохранить результат"""

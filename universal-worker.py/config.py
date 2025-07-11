@@ -15,7 +15,7 @@ class CamundaConfig(BaseSettings):
     base_url: str = Field(default="https://camunda.eg-holding.ru/engine-rest", env="CAMUNDA_BASE_URL")
     worker_id: str = Field(default="universal-worker", env="CAMUNDA_WORKER_ID")
     max_tasks: int = Field(default=10, env="CAMUNDA_MAX_TASKS")
-    lock_duration: int = Field(default=600000, env="CAMUNDA_LOCK_DURATION")  # 10 минут - исправлено с 365 дней
+    lock_duration: int = Field(default=31536000000, env="CAMUNDA_LOCK_DURATION")  # 1 год (365 дней)
     async_response_timeout: int = Field(default=30000, env="CAMUNDA_ASYNC_TIMEOUT")
     fetch_interval: int = Field(default=5000, env="CAMUNDA_FETCH_INTERVAL")  # 5 секунд
     
