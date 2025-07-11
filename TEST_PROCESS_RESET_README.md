@@ -1,6 +1,6 @@
 # Тестовый скрипт сброса процесса
 
-## test_process_reset.py
+## process_reset_tool.py
 
 **Назначение:** Автоматизированная очистка тестового окружения и перезапуск процесса `Process_1d4oa6g46` с чистого листа.
 
@@ -14,7 +14,7 @@
 
 ```bash
 # Запуск из корневой директории проекта
-python test_process_reset.py
+python process_reset_tool.py
 ```
 
 ## Требования
