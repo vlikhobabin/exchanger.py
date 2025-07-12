@@ -1,5 +1,6 @@
 /**
- * ВЕРСИЯ 11: Возврат к прямому вызову методов, но с закрытием слайдера.
+ * ВЕРСИЯ 12: Исправлена работа с полем UF_RESULT_ANSWER типа "Список".
+ * Теперь используются ID из списка: 26 = "ДА", 27 = "НЕТ".
  */
 (function() {
     'use strict';
@@ -73,11 +74,12 @@
         BX.showWait();
 
         // Шаг 1: Обновляем пользовательское поле
+        // UF_RESULT_ANSWER - поле типа "Список": ID 26 = "ДА", ID 27 = "НЕТ"
         BX.ajax.runComponentAction('bitrix:tasks.task', 'legacyUpdate', {
             mode: 'class',
             data: {
                 taskId: taskId,
-                data: { 'UF_RESULT_ANSWER': answer ? 1 : 0 }
+                data: { 'UF_RESULT_ANSWER': answer ? 26 : 27 }
             }
         }).then(function() {
             // Шаг 2: Завершаем задачу

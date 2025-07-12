@@ -192,6 +192,8 @@ logs/
 # Конфигурационные файлы с чувствительными данными
 .env
 config.local.py
+config.json
+**/config.json
 
 # Временные файлы
 tmp/
@@ -256,11 +258,16 @@ docker-compose.override.yml
 deploy/
 deployment/
 
-# SSL certificates
+# SSL certificates and private keys
 *.pem
 *.key
 *.crt
 *.csr
+*.ppk
+*.pub
+id_rsa*
+id_ecdsa*
+id_ed25519*
 
 # ============================================================================
 # Monitoring и Logs
