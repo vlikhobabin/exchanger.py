@@ -1,2 +1,0 @@
-python c:/Users/Lenovo/YandexDisk/Work/Имена/СОД/exchanger.py/camunda-sync.py/tools/deploy.py 'c:\Users/Lenovo/YandexDisk/Work/Имена/СОД/exchanger.py/camunda_Разработка и получение разрешительной документации.bpmn'
-pause

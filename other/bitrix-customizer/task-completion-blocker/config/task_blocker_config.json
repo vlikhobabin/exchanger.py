@@ -1,0 +1,72 @@
+{
+  "project_info": {
+    "name": "Task Completion Blocker",
+    "version": "1.2.0",
+    "description": "Блокировщик завершения задач без ответа на обязательный вопрос (Безопасная версия)",
+    "author": "Система автоматизации задач",
+    "created": "2025-01-12",
+    "updated": "2025-01-15",
+    "security_version": true
+  },
+  "user_fields": {
+    "expected_field": "UF_RESULT_EXPECTED",
+    "question_field": "UF_RESULT_QUESTION", 
+    "answer_field": "UF_RESULT_ANSWER",
+    "answer_values": {
+      "yes": 26,
+      "no": 27
+    }
+  },
+  "deployment": {
+    "files": [
+      {
+        "local": "task_completion_blocker.php",
+        "remote": "/home/bitrix/www/local/php_interface/task_completion_blocker.php",
+        "type": "php",
+        "permissions": "644"
+      },
+      {
+        "local": "init.php",
+        "remote": "/home/bitrix/www/local/php_interface/init.php",
+        "type": "php",
+        "permissions": "644",
+        "backup_required": true
+      },
+      {
+        "local": "enhanced_task_modifier.js",
+        "remote": "/home/bitrix/www/local/templates/bitrix24/assets/js/enhanced_task_modifier.js",
+        "type": "javascript",
+        "permissions": "644"
+      },
+      {
+        "local": "task_modifier_connector.php",
+        "remote": "/home/bitrix/www/local/templates/bitrix24/task_modifier_connector.php",
+        "type": "php",
+        "permissions": "644",
+        "description": "Безопасный коннектор для подключения JavaScript к шаблону"
+      }
+    ]
+  },
+  "logging": {
+    "enabled": true,
+    "log_category": "tasks_completion_blocker",
+    "log_level": "INFO"
+  },
+  "testing": {
+    "test_task_title": "ТЕСТ: Задача с обязательным вопросом",
+    "test_question": "Тестовый вопрос: Выполнена ли задача правильно?",
+    "timeout": 60
+  },
+  "error_messages": {
+    "no_answer_provided": "⚠️ Задача не может быть завершена без ответа на обязательный вопрос!",
+    "integration_error": "⚠️ Ошибка при проверке задачи. Завершение заблокировано из предосторожности.",
+    "js_error": "Произошла ошибка при сохранении ответа или завершении задачи."
+  },
+  "features": {
+    "server_side_blocking": true,
+    "client_side_enhancement": true,
+    "detailed_logging": true,
+    "error_handling": true,
+    "test_function": true
+  }
+} 

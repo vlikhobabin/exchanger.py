@@ -184,6 +184,7 @@ ehthumbs.db
 # Project Specific
 # ============================================================================
 
+old*/
 # Log files от всех сервисов
 logs/
 *.log
@@ -209,7 +210,7 @@ temp/
 # Diagnostic и debug файлы
 debug_*.py
 test_*.py
-*_test.py
+# *_test.py
 diagnostic_*.json
 *_diagnostics.json
 
@@ -255,8 +256,8 @@ test_results/
 docker-compose.override.yml
 
 # Deployment scripts
-deploy/
-deployment/
+# deploy/
+# deployment/
 
 # SSL certificates and private keys
 *.pem

@@ -16,13 +16,13 @@ def print_header():
 
 def check_config_exists():
     """Проверяет, существует ли файл конфигурации"""
-    config_path = Path(__file__).parent / "config.json"
+    config_path = Path(__file__).parent.parent / "config.json"
     return config_path.exists()
 
 def create_config_from_template():
     """Создает конфигурацию из шаблона"""
     template_path = Path(__file__).parent / "config.example.json"
-    config_path = Path(__file__).parent / "config.json"
+    config_path = Path(__file__).parent.parent / "config.json"
     
     if not template_path.exists():
         print("❌ Файл config.example.json не найден")
@@ -50,7 +50,7 @@ def interactive_config():
     print("-" * 40)
     
     # Загружаем текущую конфигурацию
-    config_path = Path(__file__).parent / "config.json"
+    config_path = Path(__file__).parent.parent / "config.json"
     try:
         with open(config_path, 'r', encoding='utf-8') as f:
             config = json.load(f)

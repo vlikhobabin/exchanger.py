@@ -43,7 +43,7 @@ def check_config():
     print("\n🔍 Проверка конфигурации:")
     print("-" * 40)
     
-    config_path = Path(__file__).parent / "config.json"
+    config_path = Path(__file__).parent.parent / "config.json"
     if not config_path.exists():
         print("❌ Файл config.json не найден")
         return None
