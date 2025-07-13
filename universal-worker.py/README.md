@@ -350,6 +350,36 @@ camunda-worker/
 └── logs/                  # Файлы логов
 ```
 
+Схема анализа ответа от Bitrix24
+
+```mermaid
+graph TD
+    A[Сообщение из camunda.responses.queue] --> B[Получение activity_id]
+    B --> C{activity_id найден?}
+    C -->|Нет| D[WARNING: activity_id отсутствует]
+    C -->|Да| E[Извлечение task_data]
+    E --> F[Проверка checkListCanAdd]
+    F --> G{checkListCanAdd === true?}
+    G -->|Да| H[Задача требует ответа от пользователя]
+    G -->|Нет/Отсутствует| I[INFO: Задача не требует ответа]
+    H --> J[Поиск ufResultAnswer_text]
+    J --> K{ufResultAnswer_text найден?}
+    K -->|Да| L[Конвертация ДА/НЕТ → ok/no]
+    K -->|Нет| M[WARNING: ufResultAnswer_text отсутствует]
+    L --> N[Создание переменной activity_id]
+    N --> O[Завершение External Task в Camunda]
+    I --> O
+    M --> O
+    D --> O
+    
+    style G fill:#fff3e0
+    style I fill:#e8f5e8
+    style H fill:#e3f2fd
+    style M fill:#fff3e0
+    style D fill:#fff3e0
+    style O fill:#f3e5f5
+```    
+
 ### Зависимости
 
 - `camunda-external-task-client-python3` - клиент для Camunda

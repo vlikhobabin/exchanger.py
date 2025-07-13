@@ -10,6 +10,7 @@ import sys
 import threading
 import traceback
 import requests
+import os
 from typing import Dict, Any, Optional
 from loguru import logger
 
@@ -55,6 +56,37 @@ class UniversalCamundaWorker:
         # Настройка обработки сигналов
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
+    
+    def _save_response_message_debug(self, message_data: Dict[str, Any]) -> None:
+        """
+        ОТЛАДОЧНАЯ ФУНКЦИЯ: Сохранение сообщения из camunda.responses.queue в JSON файл
+        TODO: Удалить после завершения отладки
+        """
+        try:
+            # Создаем директорию для отладочных файлов
+            debug_dir = "logs/debug"
+            if not os.path.exists(debug_dir):
+                os.makedirs(debug_dir)
+            
+            # Путь к файлу для сохранения всех сообщений
+            debug_file = os.path.join(debug_dir, "response_messages_debug.json")
+            
+            # Подготавливаем данные для сохранения
+            debug_entry = {
+                "timestamp": time.time(),
+                "datetime": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+                "message_data": message_data
+            }
+            
+            # Дописываем в конец файла
+            with open(debug_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(debug_entry, ensure_ascii=False) + "\n")
+            
+            logger.debug(f"DEBUG: Сообщение сохранено в {debug_file}")
+            
+        except Exception as e:
+            # Не прерываем основной процесс при ошибке отладки
+            logger.error(f"Ошибка сохранения отладочного сообщения: {e}")
     
     def _signal_handler(self, signum, frame):
         """Обработчик сигналов завершения"""
@@ -111,6 +143,13 @@ class UniversalCamundaWorker:
                 max_cache_size=150,  # Для ~100 процессов с запасом
                 ttl_hours=24         # Кэш живет 24 часа
             )
+            
+            # DEBUG: Создаем директорию для отладочных файлов
+            # TODO: Удалить после завершения отладки
+            debug_dir = "logs/debug"
+            if not os.path.exists(debug_dir):
+                os.makedirs(debug_dir)
+                logger.debug(f"DEBUG: Создана директория для отладочных файлов: {debug_dir}")
             
             logger.info("Инициализация завершена успешно")
             return True
@@ -301,6 +340,10 @@ class UniversalCamundaWorker:
                 )
                 return True
             
+            # DEBUG: Сохраняем сообщение в отладочный файл перед обработкой
+            # TODO: Удалить после завершения отладки
+            self._save_response_message_debug(message_data)
+            
             self.stats["processed_responses"] += 1
             
             # Обрабатываем ответное сообщение
@@ -322,8 +365,50 @@ class UniversalCamundaWorker:
             logger.error(f"Ошибка при обработке сообщения из очереди ответов: {e}")
             return False
     
+    def _convert_uf_result_answer(self, uf_result_answer_text: str) -> str:
+        """
+        Конвертирует значения ufResultAnswer_text для использования в conditionExpression
+        
+        Args:
+            uf_result_answer_text: Текстовое значение ответа из Bitrix24
+            
+        Returns:
+            Конвертированное значение для использования в Camunda:
+            - "НЕТ" -> "no"
+            - "ДА" -> "ok"  
+            - другие значения -> "no" (по умолчанию)
+        """
+        try:
+            if not uf_result_answer_text:
+                return "no"
+            
+            # Приводим к верхнему регистру для унификации
+            answer_upper = str(uf_result_answer_text).strip().upper()
+            
+            # Конвертируем значения
+            if answer_upper == "ДА":
+                return "ok"
+            elif answer_upper == "НЕТ":
+                return "no"
+            else:
+                # По умолчанию для неизвестных значений
+                logger.warning(f"Неизвестное значение ufResultAnswer_text: '{uf_result_answer_text}', используем 'no'")
+                return "no"
+                
+        except Exception as e:
+            logger.error(f"Ошибка конвертации ufResultAnswer_text '{uf_result_answer_text}': {e}")
+            return "no"
+
     def _process_response_message(self, message_data: Dict[str, Any]) -> bool:
-        """Обработка ответного сообщения и завершение задачи в Camunda"""
+        """
+        Обработка ответного сообщения и завершение задачи в Camunda
+        
+        ИСПРАВЛЕНИЯ (2025-01-13):
+        - Убрано загрязнение переменных процесса битрикс-специфичными полями
+        - Удалена переменная result из переменных процесса  
+        - Логика проверки ответа использует ufResultExpected вместо checkListCanAdd
+        - Данные извлекаются только из строго определенных полей API ответа
+        """
         try:
             # Извлекаем данные из сообщения
             original_message = message_data.get("original_message", {})
@@ -338,20 +423,60 @@ class UniversalCamundaWorker:
             logger.info(f"Обрабатываем ответ для задачи {task_id} (статус: {processing_status})")
             
             # Проверяем статус обработки
-            if processing_status != "completed":
-                logger.warning(f"Задача {task_id} имеет статус '{processing_status}', пропускаем")
+            # Поддерживаем оба статуса: completed (прямой ответ) и completed_by_tracker (через tracker)
+            if processing_status not in ["completed", "completed_by_tracker"]:
+                logger.warning(f"Задача {task_id} имеет неподдерживаемый статус '{processing_status}', пропускаем")
                 return True  # Считаем успешным, удаляем сообщение
+            
+            # Дополнительная информация о типе обработки
+            if processing_status == "completed_by_tracker":
+                logger.info(f"Задача {task_id} завершена через tracker (автоматическое отслеживание)")
+            else:
+                logger.info(f"Задача {task_id} завершена через прямой ответ системы")
             
             # Подготавливаем переменные для Camunda
             original_variables = message_data.get("original_message", {}).get("variables", {})
             variables = original_variables.copy() if original_variables else {}
             
-            # Определяем успех/ошибку на основе response_data
-            result_status = self._determine_result_status(response_data)
-            variables["result"] = result_status
+            # НЕ определяем и НЕ добавляем переменную result в переменные процесса,
+            # так как она больше не используется в логике conditionExpression
+            # Удаляем строки:
+            # result_status = self._determine_result_status(response_data)
+            # variables["result"] = result_status
             
             # Извлекаем данные из ответа системы (например, Bitrix24)
             self._extract_response_data(response_data, variables)
+            
+            # Новая логика для conditionExpression с activity_id
+            activity_id = original_message.get("activity_id")
+            if activity_id:
+                # Извлекаем данные задачи из response_data
+                task_data = response_data.get("result", {}).get("task", {})
+                
+                # Проверяем, требуется ли ответ от пользователя по полю ufResultExpected
+                # Это поле устанавливается при создании задачи на основе UF_RESULT_EXPECTED из metadata
+                uf_result_expected = task_data.get("ufResultExpected")
+                
+                # Задача требует ответа только если ufResultExpected равно "1" (Y в Bitrix24)
+                if uf_result_expected == "1":
+                    # Задача требует ответа от пользователя
+                    uf_result_answer_text = task_data.get("ufResultAnswer_text")
+                    
+                    if uf_result_answer_text:
+                        # Конвертируем значение для использования в Camunda
+                        converted_value = self._convert_uf_result_answer(uf_result_answer_text)
+                        
+                        # Создаем переменную с именем activity_id
+                        variables[activity_id] = converted_value
+                        
+                        logger.info(f"Создана переменная процесса: {activity_id} = '{converted_value}' (исходное: '{uf_result_answer_text}')")
+                    else:
+                        logger.warning(f"Не найдено значение ufResultAnswer_text для activity_id: {activity_id}")
+                else:
+                    # Задача не требует ответа от пользователя (ufResultExpected != "1")
+                    logger.info(f"Задача {task_id} не требует ответа от пользователя (ufResultExpected: {uf_result_expected}), пропускаем установку переменной {activity_id}")
+            else:
+                logger.warning("Не найден activity_id в original_message")
             
             # Завершаем задачу в Camunda
             return self._complete_task_in_camunda(task_id, variables)
@@ -359,29 +484,6 @@ class UniversalCamundaWorker:
         except Exception as e:
             logger.error(f"Ошибка обработки ответного сообщения: {e}")
             return False
-    
-    def _determine_result_status(self, response_data: Dict[str, Any]) -> str:
-        """Определение статуса результата на основе response_data"""
-        try:
-            result = response_data.get("result", {})
-            
-            # Проверяем наличие явных индикаторов ошибки
-            if "error" in result and result["error"]:
-                return "error"
-            
-            if "success" in result:
-                return "ok" if result["success"] else "error"
-            
-            # Если есть данные задачи, считаем успешным
-            if "task" in result and result["task"]:
-                return "ok"
-            
-            # По умолчанию - успех (для совместимости)
-            return "ok"
-            
-        except Exception as e:
-            logger.error(f"Ошибка определения статуса результата: {e}")
-            return "error"
     
     def _extract_response_data(self, response_data: Dict[str, Any], variables: Dict[str, Any]):
         """Извлечение данных из ответа системы и добавление в переменные Camunda"""
@@ -427,21 +529,19 @@ class UniversalCamundaWorker:
                 if "PARENT_ID" in task_data:
                     variables["bitrix_task_parent_id"] = str(task_data["PARENT_ID"])
                 
-                # Сохраняем полную структуру задачи как JSON для сложных случаев
-                variables["bitrix_task_data"] = task_data
+                # НЕ добавляем пользовательские поля (UF_) в переменные процесса,
+                # так как они специфичны для конкретной задачи и не должны влиять на весь процесс
+                # УДаляем закомментированную секцию "Пользовательские поля (UF_)"
                 
                 logger.info(f"Извлечены данные задачи Bitrix24: ID={task_data.get('ID')}, Title={task_data.get('TITLE')}")
             
-            # Извлекаем другие данные из result
-            if "success" in result:
-                variables["system_success"] = result["success"]
-            if "message" in result:
-                variables["system_message"] = str(result["message"])
-            if "error" in result:
-                variables["system_error"] = str(result["error"])
+            # НЕ извлекаем системные данные из result в переменные процесса
+            # так как они не нужны для логики процесса
+            # Удаляем секцию извлечения success, message, error
             
-            # Сохраняем полный response_data для сложных случаев
-            variables["response_data"] = response_data
+            # НЕ сохраняем полный response_data в переменные процесса
+            # так как это может привести к разрастанию переменных и проблемам с памятью
+            # Удаляем строку variables["response_data"] = response_data
             
         except Exception as e:
             logger.error(f"Ошибка извлечения данных из response_data: {e}")
