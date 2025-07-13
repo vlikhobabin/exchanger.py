@@ -31,12 +31,7 @@ class TaskBlockerDeployer:
             {
                 "local_file": "enhanced_task_modifier.js",
                 "remote_path": "/home/bitrix/www/local/templates/bitrix24/assets/js/enhanced_task_modifier.js",
-                "description": "JavaScript модификатор интерфейса задач"
-            },
-            {
-                "local_file": "task_modifier_connector.php",
-                "remote_path": "/home/bitrix/www/local/templates/bitrix24/task_modifier_connector.php",
-                "description": "Коннектор для безопасного подключения JavaScript к шаблону"
+                "description": "JavaScript модификатор интерфейса задач (подключается напрямую через footer.php)"
             }
         ]
     
@@ -51,6 +46,92 @@ class TaskBlockerDeployer:
         except json.JSONDecodeError as e:
             print(f"❌ Ошибка в файле конфигурации: {e}")
             return None
+    
+    def copy_system_template(self, server_config):
+        """
+        Копирует системный шаблон bitrix24 в local для кастомизации
+        КРИТИЧЕСКИ ВАЖНО: Этот шаг необходим перед любыми модификациями!
+        """
+        print("🔄 Копирование системного шаблона bitrix24 в local...")
+        print("-" * 50)
+        
+        system_template_path = "/home/bitrix/www/bitrix/templates/bitrix24"
+        local_template_path = "/home/bitrix/www/local/templates/bitrix24"
+        
+        # Проверяем, существует ли системный шаблон
+        if not self._check_template_exists(server_config, system_template_path):
+            print(f"❌ Системный шаблон не найден: {system_template_path}")
+            print("💡 Возможные варианты:")
+            print("   - Используется другой шаблон")
+            print("   - Шаблон находится в другой папке")
+            print("   - Нестандартная установка Bitrix24")
+            return False
+        
+        # Проверяем, есть ли уже локальная копия
+        if self._check_template_exists(server_config, local_template_path):
+            print(f"ℹ️  Локальная копия шаблона уже существует: {local_template_path}")
+            
+            # Проверяем, есть ли footer.php для модификаций
+            footer_path = f"{local_template_path}/footer.php"
+            if self._check_file_exists(server_config, footer_path):
+                print("✅ footer.php найден - готов для модификаций")
+            else:
+                print("⚠️  footer.php не найден - создаем из системного шаблона")
+                if not self._copy_footer_from_system(server_config, system_template_path, local_template_path):
+                    print("❌ Не удалось скопировать footer.php")
+                    return False
+            
+            return True
+        
+        # Копируем системный шаблон
+        print(f"📂 Копирование {system_template_path} → {local_template_path}")
+        
+        copy_command = f"""
+        # Создаем директорию local/templates если её нет
+        mkdir -p /home/bitrix/www/local/templates
+        
+        # Копируем системный шаблон
+        cp -r {system_template_path} {local_template_path}
+        
+        # Устанавливаем права доступа
+        chown -R bitrix:bitrix {local_template_path}
+        chmod -R 755 {local_template_path}
+        
+        # Проверяем успешность копирования
+        test -f {local_template_path}/footer.php && echo "SUCCESS" || echo "FAILED"
+        """
+        
+        success, output = self._execute_remote_command_with_output(server_config, copy_command)
+        
+        if success and "SUCCESS" in output:
+            print("✅ Системный шаблон успешно скопирован в local")
+            print(f"📁 Создана структура: {local_template_path}")
+            print("🎯 Теперь можно безопасно модифицировать footer.php")
+            return True
+        else:
+            print(f"❌ Не удалось скопировать системный шаблон: {output}")
+            return False
+    
+    def _copy_footer_from_system(self, server_config, system_path, local_path):
+        """Копирует footer.php из системного шаблона в локальный"""
+        copy_command = f"cp {system_path}/footer.php {local_path}/footer.php"
+        
+        if self._execute_remote_command(server_config, copy_command):
+            print("✅ footer.php скопирован из системного шаблона")
+            return True
+        else:
+            print("❌ Не удалось скопировать footer.php")
+            return False
+    
+    def _check_template_exists(self, server_config, template_path):
+        """Проверяет существование шаблона"""
+        check_command = f"test -d '{template_path}' && test -f '{template_path}/footer.php'"
+        return self._execute_remote_command(server_config, check_command)
+    
+    def _check_file_exists(self, server_config, file_path):
+        """Проверяет существование файла"""
+        check_command = f"test -f '{file_path}'"
+        return self._execute_remote_command(server_config, check_command)
     
     def create_remote_directory(self, server_config, remote_path):
         """Создает удаленную директорию"""
@@ -67,6 +148,15 @@ class TaskBlockerDeployer:
             return self._execute_with_key(server_config, command)
         else:
             return self._execute_with_password(server_config, command)
+    
+    def _execute_remote_command_with_output(self, server_config, command):
+        """Выполняет команду на удаленном сервере и возвращает результат и вывод"""
+        auth_method = server_config.get('auth_method', 'password')
+        
+        if auth_method == 'key':
+            return self._execute_with_key_and_output(server_config, command)
+        else:
+            return self._execute_with_password_and_output(server_config, command)
     
     def _execute_with_key(self, server_config, command):
         """Выполняет команду с использованием ключа"""
@@ -110,6 +200,52 @@ class TaskBlockerDeployer:
         except:
             return False
     
+    def _execute_with_key_and_output(self, server_config, command):
+        """Выполняет команду с ключом и возвращает результат"""
+        key_file = server_config.get('key_file')
+        if not key_file:
+            return False, "No key file specified"
+        
+        if os.path.isabs(key_file):
+            key_path = Path(key_file)
+        else:
+            key_path = self.project_root.parent / key_file
+        
+        if not key_path.exists():
+            return False, f"Key file not found: {key_path}"
+        
+        # Проверяем, есть ли plink
+        plink_cmd = shutil.which('plink')
+        if plink_cmd:
+            cmd = [
+                'plink',
+                '-i', str(key_path),
+                '-batch',
+                f"{server_config['user']}@{server_config['host']}",
+                command
+            ]
+        else:
+            if key_path.suffix.lower() == '.ppk':
+                return False, "PPK key requires PuTTY utilities"
+            
+            cmd = [
+                'ssh',
+                '-i', str(key_path),
+                '-o', 'StrictHostKeyChecking=no',
+                f"{server_config['user']}@{server_config['host']}",
+                command
+            ]
+        
+        try:
+            result = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=30)
+            return True, result.stdout
+        except subprocess.CalledProcessError as e:
+            return False, e.stderr
+        except subprocess.TimeoutExpired:
+            return False, "Command timeout"
+        except Exception as e:
+            return False, str(e)
+    
     def _execute_with_password(self, server_config, command):
         """Выполняет команду с использованием пароля"""
         cmd = [
@@ -124,6 +260,25 @@ class TaskBlockerDeployer:
             return True
         except:
             return False
+    
+    def _execute_with_password_and_output(self, server_config, command):
+        """Выполняет команду с паролем и возвращает результат"""
+        cmd = [
+            'ssh',
+            '-o', 'StrictHostKeyChecking=no',
+            f"{server_config['user']}@{server_config['host']}",
+            command
+        ]
+        
+        try:
+            result = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=30)
+            return True, result.stdout
+        except subprocess.CalledProcessError as e:
+            return False, e.stderr
+        except subprocess.TimeoutExpired:
+            return False, "Command timeout"
+        except Exception as e:
+            return False, str(e)
     
     def deploy_file(self, server_config, file_info):
         """Развертывает один файл на сервер"""
@@ -255,7 +410,21 @@ class TaskBlockerDeployer:
             except subprocess.CalledProcessError:
                 print("⚠️  Не удалось создать резервную копию")
         
+        # КРИТИЧЕСКИ ВАЖНО: Копирование системного шаблона
+        print("\n" + "=" * 70)
+        print("🔄 ЭТАП 1: Подготовка шаблона для модификаций")
+        print("=" * 70)
+        
+        if not self.copy_system_template(server_config):
+            print("❌ Не удалось подготовить шаблон для модификаций")
+            print("💡 Без локального шаблона нельзя безопасно модифицировать footer.php")
+            return False
+        
         # Развертываем файлы
+        print("\n" + "=" * 70)
+        print("📂 ЭТАП 2: Развертывание файлов блокировщика")
+        print("=" * 70)
+        
         successful_deployments = 0
         failed_deployments = 0
         
@@ -273,14 +442,6 @@ class TaskBlockerDeployer:
             else:
                 failed_deployments += 1
         
-        # Подключаем JavaScript файл к шаблону
-        if successful_deployments > 0:
-            print(f"\n🔗 Подключение JavaScript к шаблону...")
-            js_success = self.inject_javascript_to_template(server_config)
-            if not js_success:
-                print("⚠️  Не удалось подключить JavaScript к шаблону")
-                print("💡 Файлы развернуты, но JavaScript нужно подключить вручную")
-        
         # Результат
         print(f"\n" + "=" * 70)
         print(f"📊 Результат развертывания:")
@@ -294,193 +455,12 @@ class TaskBlockerDeployer:
             print(f"   2. Создайте тестовую задачу с полем 'Ожидается результат = Да'")
             print(f"   3. Попробуйте завершить задачу без заполнения ответа")
             print(f"   4. Проверьте логи в /bitrix/logs/")
+            print(f"   5. Подключите JavaScript вручную через footer.php")
+            print(f"      <script src=\"/local/templates/bitrix24/assets/js/enhanced_task_modifier.js\"></script>")
         else:
             print(f"\n❌ Развертывание не удалось")
         
         return successful_deployments > 0
-    
-    def inject_javascript_to_template(self, server_config):
-        """
-        Безопасно подключает JavaScript файл к шаблону
-        ИСПРАВЛЕНО: Теперь использует безопасный подход через коннектор
-        """
-        print("🔗 Безопасное подключение JavaScript к шаблону...")
-        
-        # Путь к файлу header.php
-        header_path = "/home/bitrix/www/local/templates/bitrix24/header.php"
-        connector_path = "/home/bitrix/www/local/templates/bitrix24/task_modifier_connector.php"
-        
-        # Шаг 1: Создаем резервную копию header.php ДО изменения (если существует)
-        if self._check_file_exists(server_config, header_path):
-            print("📦 Создание резервной копии header.php...")
-            backup_success = self._backup_header_file(server_config, header_path)
-            
-            if not backup_success:
-                print("⚠️  Не удалось создать резервную копию header.php")
-        
-        # Шаг 2: Проверяем существование header.php
-        header_exists = self._check_file_exists(server_config, header_path)
-        
-        if header_exists:
-            # Шаг 3: Проверяем, не подключен ли уже коннектор
-            if self._is_connector_already_included(server_config, header_path):
-                print("ℹ️  JavaScript коннектор уже подключен к шаблону")
-                return True
-            
-            # Шаг 4: Добавляем подключение коннектора к существующему файлу
-            return self._add_connector_to_existing_header(server_config, header_path, connector_path)
-        else:
-            # Шаг 5: Создаем новый header.php с коннектором
-            return self._create_new_header_with_connector(server_config, header_path, connector_path)
-    
-    def _backup_header_file(self, server_config, header_path):
-        """Создает резервную копию header.php"""
-        backup_path = header_path + ".backup_" + datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        
-        copy_command = f"cp '{header_path}' '{backup_path}' 2>/dev/null || true"
-        
-        success, output = self._execute_remote_command_with_output(server_config, copy_command)
-        
-        if success:
-            print(f"✅ Резервная копия создана: {backup_path}")
-            return True
-        else:
-            print(f"⚠️  Не удалось создать резервную копию: {header_path}")
-            return False
-    
-    def _check_file_exists(self, server_config, file_path):
-        """Проверяет существование файла на сервере"""
-        check_command = f"test -f '{file_path}'"
-        return self._execute_remote_command(server_config, check_command)
-    
-    def _is_connector_already_included(self, server_config, header_path):
-        """Проверяет, подключен ли уже коннектор"""
-        check_command = f"grep -q 'task_modifier_connector.php' '{header_path}' 2>/dev/null"
-        return self._execute_remote_command(server_config, check_command)
-    
-    def _add_connector_to_existing_header(self, server_config, header_path, connector_path):
-        """Добавляет подключение коннектора к существующему header.php"""
-        add_connector_command = f"""
-# Добавляем подключение коннектора к существующему header.php
-echo '' >> '{header_path}'
-echo '<?php' >> '{header_path}'
-echo '// Подключение модификатора задач через безопасный коннектор' >> '{header_path}'
-echo 'require_once(__DIR__ . "/task_modifier_connector.php");' >> '{header_path}'
-echo '?>' >> '{header_path}'
-"""
-        
-        success, output = self._execute_remote_command_with_output(server_config, add_connector_command)
-        
-        if success:
-            print("✅ Коннектор добавлен к существующему header.php")
-            return True
-        else:
-            print(f"❌ Не удалось добавить коннектор: {output}")
-            return False
-    
-    def _create_new_header_with_connector(self, server_config, header_path, connector_path):
-        """Создает новый header.php с подключением коннектора"""
-        # Создаем директорию если её нет
-        create_dir_command = f"mkdir -p '{os.path.dirname(header_path)}'"
-        self._execute_remote_command(server_config, create_dir_command)
-        
-        # Создаем новый header.php
-        create_header_command = f"""
-cat > '{header_path}' << 'EOF'
-<?php
-/**
- * Заголовок локального шаблона Bitrix24
- * Создан автоматически системой блокировки задач
- */
-
-// Подключение модификатора задач через безопасный коннектор
-require_once(__DIR__ . "/task_modifier_connector.php");
-?>
-EOF
-"""
-        
-        success, output = self._execute_remote_command_with_output(server_config, create_header_command)
-        
-        if success:
-            print("✅ Создан новый header.php с подключением коннектора")
-            return True
-        else:
-            print(f"❌ Не удалось создать header.php: {output}")
-            return False
-    
-    def _execute_remote_command_with_output(self, server_config, command):
-        """Выполняет команду на удаленном сервере и возвращает результат и вывод"""
-        auth_method = server_config.get('auth_method', 'password')
-        
-        if auth_method == 'key':
-            return self._execute_with_key_and_output(server_config, command)
-        else:
-            return self._execute_with_password_and_output(server_config, command)
-    
-    def _execute_with_key_and_output(self, server_config, command):
-        """Выполняет команду с ключом и возвращает результат"""
-        key_file = server_config.get('key_file')
-        if not key_file:
-            return False, "No key file specified"
-        
-        if os.path.isabs(key_file):
-            key_path = Path(key_file)
-        else:
-            key_path = self.project_root.parent / key_file
-        
-        if not key_path.exists():
-            return False, f"Key file not found: {key_path}"
-        
-        # Проверяем, есть ли plink
-        plink_cmd = shutil.which('plink')
-        if plink_cmd:
-            cmd = [
-                'plink',
-                '-i', str(key_path),
-                '-batch',
-                f"{server_config['user']}@{server_config['host']}",
-                command
-            ]
-        else:
-            if key_path.suffix.lower() == '.ppk':
-                return False, "PPK key requires PuTTY utilities"
-            
-            cmd = [
-                'ssh',
-                '-i', str(key_path),
-                '-o', 'StrictHostKeyChecking=no',
-                f"{server_config['user']}@{server_config['host']}",
-                command
-            ]
-        
-        try:
-            result = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=30)
-            return True, result.stdout
-        except subprocess.CalledProcessError as e:
-            return False, e.stderr
-        except subprocess.TimeoutExpired:
-            return False, "Command timeout"
-        except Exception as e:
-            return False, str(e)
-    
-    def _execute_with_password_and_output(self, server_config, command):
-        """Выполняет команду с паролем и возвращает результат"""
-        cmd = [
-            'ssh',
-            '-o', 'StrictHostKeyChecking=no',
-            f"{server_config['user']}@{server_config['host']}",
-            command
-        ]
-        
-        try:
-            result = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=30)
-            return True, result.stdout
-        except subprocess.CalledProcessError as e:
-            return False, e.stderr
-        except subprocess.TimeoutExpired:
-            return False, "Command timeout"
-        except Exception as e:
-            return False, str(e)
     
     def test_deployment(self):
         """Тестирует развертывание"""
@@ -492,6 +472,16 @@ EOF
         
         server_config = config['server']
         
+        # Проверяем локальный шаблон
+        print("📋 Проверка локального шаблона:")
+        template_check = "test -d /home/bitrix/www/local/templates/bitrix24 && echo 'EXISTS' || echo 'NOT_FOUND'"
+        success, output = self._execute_remote_command_with_output(server_config, template_check)
+        if success and "EXISTS" in output:
+            print("   ✅ Локальный шаблон bitrix24 найден")
+        else:
+            print("   ❌ Локальный шаблон bitrix24 НЕ найден")
+            print("   💡 Необходимо скопировать системный шаблон в local")
+        
         # Проверяем доступность файлов
         test_commands = [
             "ls -la /home/bitrix/www/local/php_interface/task_completion_blocker.php",
@@ -499,7 +489,7 @@ EOF
             "ls -la /home/bitrix/www/local/templates/bitrix24/assets/js/enhanced_task_modifier.js"
         ]
         
-        print("📋 Проверка развернутых файлов:")
+        print("\n📋 Проверка развернутых файлов:")
         for cmd in test_commands:
             if self._execute_remote_command(server_config, cmd):
                 print(f"   ✅ {cmd.split('/')[-1]}")
@@ -513,6 +503,11 @@ EOF
         else:
             print("   ⚠️  Проблемы с синтаксисом PHP")
         
+        # Напоминание о подключении JavaScript
+        print("\n📝 Напоминание:")
+        print("   ⚠️  Не забудьте подключить JavaScript вручную через footer.php:")
+        print("   <script src=\"/local/templates/bitrix24/assets/js/enhanced_task_modifier.js\"></script>")
+        
         return True
 
 def main():
@@ -521,6 +516,7 @@ def main():
         print("Использование:")
         print("  python deploy_task_blocker.py deploy  - развернуть все файлы")
         print("  python deploy_task_blocker.py test    - протестировать развертывание")
+        print("  python deploy_task_blocker.py template - только скопировать системный шаблон")
         return 1
     
     deployer = TaskBlockerDeployer()
@@ -533,6 +529,12 @@ def main():
     elif command == "test":
         success = deployer.test_deployment()
         return 0 if success else 1
+    elif command == "template":
+        config = deployer.load_config()
+        if config:
+            success = deployer.copy_system_template(config['server'])
+            return 0 if success else 1
+        return 1
     else:
         print("❌ Неизвестная команда")
         return 1
