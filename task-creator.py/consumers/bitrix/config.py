@@ -15,19 +15,25 @@ class BitrixConfig(BaseSettings):
     """Настройки Bitrix24"""
     webhook_url: str = Field(default="https://bx.eg-holding.ru/rest/1/123123123123", env="BITRIX_WEBHOOK_URL")
     default_responsible_id: int = Field(default=1, env="BITRIX_DEFAULT_RESPONSIBLE_ID")
-    default_priority: int = Field(default=1, env="BITRIX_DEFAULT_PRIORITY")  # 1-низкий, 2-обычный, 3-высокий
+    default_priority: int = Field(default=1, env="BITRIX_DEFAULT_PRIORITY")
     request_timeout: int = Field(default=30, env="BITRIX_REQUEST_TIMEOUT")
     max_description_length: int = Field(default=10000, env="BITRIX_MAX_DESCRIPTION_LENGTH")
     
-    # Настройки кеширования соответствий ролей
-    roles_iblock_id: int = Field(default=17, env="BITRIX_ROLES_IBLOCK_ID")  # Не используется (оставлено для совместимости)
-    roles_cache_ttl: int = Field(default=3600, env="BITRIX_ROLES_CACHE_TTL")  # секунды
+    roles_cache_ttl: int = Field(default=3600, env="BITRIX_ROLES_CACHE_TTL")
+    
+    # НОВОЕ ПОЛЕ: Маппинг для значений списка "Ответ по результату"
+    # Формат: "ID значения в Битрикс24": "Текстовое представление"
+    uf_result_answer_mapping: Dict[str, str] = Field(default={
+        "26": "ДА",
+        "27": "НЕТ"
+    })
     
     class Config:
         env_prefix = "BITRIX_"
 
 
 class WorkerConfig(BaseSettings):
+    # ... (остальная часть файла без изменений)
     """Общие настройки Worker (только для Bitrix модуля)"""
     log_level: str = Field(default="INFO", env="LOG_LEVEL")
     retry_attempts: int = Field(default=3, env="RETRY_ATTEMPTS")
@@ -41,27 +47,13 @@ class WorkerConfig(BaseSettings):
     class Config:
         env_prefix = "WORKER_"
 
-
-# Поддерживаемые топики для Bitrix24
 SUPPORTED_TOPICS: List[str] = [
-    "bitrix_create_task",
-    "bitrix_update_task", 
-    "bitrix_create_deal",
-    "bitrix_update_deal",
-    "bitrix_create_contact",
-    "bitrix_create_lead",
-    "bitrix_update_lead",
-    "bitrix_create_company",
-    "bitrix_update_company",
+    "bitrix_create_task", "bitrix_update_task", "bitrix_create_deal",
+    "bitrix_update_deal", "bitrix_create_contact", "bitrix_create_lead",
+    "bitrix_update_lead", "bitrix_create_company", "bitrix_update_company",
 ]
 
-# Создание экземпляров конфигурации
 bitrix_config = BitrixConfig()
-worker_config = WorkerConfig() 
-
-# Настройки для соответствий ролей
-roles_iblock_id = bitrix_config.roles_iblock_id  # Не используется
+worker_config = WorkerConfig()
 roles_cache_ttl = bitrix_config.roles_cache_ttl
-
-# Файл соответствий ролей (основной способ)
-roles_mapping_file = os.getenv('BITRIX_ROLES_MAPPING_FILE', 'roles_mapping.json') 
+roles_mapping_file = os.getenv('BITRIX_ROLES_MAPPING_FILE', 'roles_mapping.json')
