@@ -1,0 +1,23 @@
+[
+  {
+    "diagramElementId": null,
+    "assigneeEdgeId": 22505926,
+    "assigneeName": null,
+    "assigneeId": null,
+    "elementId": "Activity_1nptpu5",
+    "elementName": "Проведение выручки по договорам ДДУ и ДКП в УУ",
+    "description": "<p>ЧЕКЛИСТ: <a target=\"_blank\" rel=\"noopener noreferrer\" href=\"https://bx.eg-holding.ru/workgroups/group/43/tasks/task/view/1566/\">https://bx.eg-holding.ru/workgroups/group/43/tasks/task/view/1566/</a></p><p>&nbsp;</p>",
+    "diagramId": "c04c8289-64ee-4f86-92d9-f1571c7da206",
+    "diagramName": ".Процессы УУ. Модель для автоматизации",
+    "assigneeType": null,
+    "updatedOn": "2025-08-21T16:34:00.239175",
+    "updatedBy": "lve@eg-holding.ru",
+    "createdOn": "2025-08-21T16:34:00.239173",
+    "versionNumber": 1,
+    "color": null,
+    "diagramStatus": "NEW",
+    "duration": 0,
+    "durationString": null,
+    "externalLink": ""
+  }
+]

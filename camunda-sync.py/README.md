@@ -42,8 +42,8 @@
 
 **Использование**:
 ```bash
-cd tools
-python get_diagrams_list.py
+# cd tools
+py camunda-sync.py/tools/get_diagrams_list.py
 ```
 
 **Результат**: JSON список диаграмм с метаданными (название, ID, автор, дата обновления)
