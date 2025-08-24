@@ -75,22 +75,25 @@ class BPMNConverter:
         
         print("✅ Файл загружен успешно")
         
-        # Определяем ID процесса и загружаем расширения
-        process_id = self._get_process_id(root)
-        extension_module = None
+        # ВРЕМЕННО ОТКЛЮЧЕНЫ: Определяем ID процесса и загружаем расширения
+        # process_id = self._get_process_id(root)
+        # extension_module = None
         
-        if process_id:
-            extension_module = self._load_process_extension(process_id)
+        # if process_id:
+        #     extension_module = self._load_process_extension(process_id)
         
-        # Выполняем предобработку (если есть расширение)
-        if extension_module:
-            try:
-                print("🔧 Выполнение предобработки расширения...")
-                extension_module.pre_process(root, self)
-                print("✅ Предобработка расширения завершена")
-            except Exception as e:
-                print(f"⚠️ Ошибка при выполнении предобработки: {e}")
-                print("Продолжаем стандартную обработку...")
+        # # Выполняем предобработку (если есть расширение)  
+        # if extension_module:
+        #     try:
+        #         print("🔧 Выполнение предобработки расширения...")
+        #         extension_module.pre_process(root, self)
+        #         print("✅ Предобработка расширения завершена")
+        #     except Exception as e:
+        #         print(f"⚠️ Ошибка при выполнении предобработки: {e}")
+        #         print("Продолжаем стандартную обработку...")
+        
+        # Встроенная логика из расширения Process_1d4oa6g46 (предобработка)
+        self._insert_intermediate_tasks_for_yes_flows(root)
         
         # Применяем трансформации
         self._add_camunda_namespaces(root)
@@ -105,15 +108,18 @@ class BPMNConverter:
         self._clean_diagram_elements(root)
         self._update_bpmn_plane(root)
         
-        # Выполняем постобработку (если есть расширение)
-        if extension_module:
-            try:
-                print("🔧 Выполнение постобработки расширения...")
-                extension_module.post_process(root, self)
-                print("✅ Постобработка расширения завершена")
-            except Exception as e:
-                print(f"⚠️ Ошибка при выполнении постобработки: {e}")
-                print("Сохраняем результат...")
+        # ВРЕМЕННО ОТКЛЮЧЕНО: Выполняем постобработку (если есть расширение)
+        # if extension_module:
+        #     try:
+        #         print("🔧 Выполнение постобработки расширения...")
+        #         extension_module.post_process(root, self)
+        #         print("✅ Постобработка расширения завершена")
+        #     except Exception as e:
+        #         print(f"⚠️ Ошибка при выполнении постобработки: {e}")
+        #         print("Сохраняем результат...")
+        
+        # Встроенная логика из расширения Process_1d4oa6g46 (постобработка)
+        self._assign_responsible_to_unassigned_tasks(root)
         
         # Сохраняем результат
         self._save_result(tree, output_file)
@@ -153,11 +159,25 @@ class BPMNConverter:
         """Обновить атрибуты процесса"""
         print("🔧 Обновление атрибутов процесса...")
         
+        # Извлекаем данные из Collaboration/Participant
+        process_data = self._extract_process_data_from_collaboration(root)
+        
         # Ищем элемент process
         process = root.find('.//bpmn:process', self.namespaces)
         if process is not None:
-            # Сохраняем оригинальный ID (не изменяем согласно требованиям)
-            original_id = process.get('id', 'Process_1d4oa6g46')
+            # Получаем ID процесса
+            current_id = process.get('id')
+            
+            # Если из Collaboration получили новый ID, используем его
+            if process_data['id'] and process_data['id'] != current_id:
+                print(f"🔄 Обновляем ID процесса: {current_id} → {process_data['id']}")
+                process.set('id', process_data['id'])
+                current_id = process_data['id']
+            elif not current_id:
+                # Если вообще нет ID, ставим дефолтный (маловероятно)
+                current_id = 'Process_default'
+                process.set('id', current_id)
+                print(f"⚠️ Установлен дефолтный ID процесса: {current_id}")
             
             # Устанавливаем isExecutable в true
             process.set('isExecutable', 'true')
@@ -165,11 +185,17 @@ class BPMNConverter:
             # Добавляем только необходимые Camunda атрибуты
             process.set('{http://camunda.org/schema/1.0/bpmn}historyTimeToLive', '1')
             
-            # Добавляем name процесса из исходной схемы (если есть)
-            if not process.get('name'):
-                process.set('name', 'Разработка и получение разрешительной документации')
+            # Обновляем name процесса из данных Collaboration/Participant
+            if process_data['name']:
+                print(f"🔄 Обновляем название процесса: {process_data['name']}")
+                process.set('name', process_data['name'])
+            elif not process.get('name'):
+                # Если нет названия вообще, ставим дефолтное
+                default_name = 'Автоматически сконвертированный процесс'
+                process.set('name', default_name)
+                print(f"⚠️ Установлено дефолтное название: {default_name}")
             
-            print(f"✅ Процесс обновлен (ID: {original_id})")
+            print(f"✅ Процесс обновлен (ID: {current_id})")
         else:
             print("⚠️ Элемент process не найден")
     
@@ -995,6 +1021,61 @@ class BPMNConverter:
         except Exception as e:
             print(f"⚠️ Ошибка при извлечении ID процесса: {e}")
             return None
+
+    def _extract_process_data_from_collaboration(self, root) -> Dict[str, Optional[str]]:
+        """
+        Извлечь данные процесса из Collaboration/Participant
+        
+        Returns:
+            Dict с ключами 'id' и 'name' процесса, извлеченными из первого participant
+        """
+        try:
+            # Ищем collaboration
+            collaboration = root.find('.//bpmn:collaboration', self.namespaces)
+            if collaboration is None:
+                print("📋 Collaboration не найден, используем существующие данные процесса")
+                # Если нет collaboration, берем данные из самого процесса
+                process = root.find('.//bpmn:process', self.namespaces)
+                if process is not None:
+                    return {
+                        'id': process.get('id'),
+                        'name': process.get('name')
+                    }
+                return {'id': None, 'name': None}
+            
+            # Ищем первого participant
+            participants = collaboration.findall('bpmn:participant', self.namespaces)
+            if not participants:
+                print("⚠️ Participant не найден в Collaboration")
+                return {'id': None, 'name': None}
+            
+            first_participant = participants[0]
+            participant_id = first_participant.get('id')
+            participant_name = first_participant.get('name', '')
+            process_ref = first_participant.get('processRef')
+            
+            print(f"🔍 Найден первый participant:")
+            print(f"   ID: {participant_id}")
+            print(f"   Name: {participant_name}")
+            print(f"   ProcessRef: {process_ref}")
+            
+            # Очистка имени от HTML символов если есть
+            if participant_name:
+                import html
+                participant_name = html.unescape(participant_name)
+                # Заменяем переносы строк на пробелы
+                participant_name = participant_name.replace('\n', ' ').replace('\r', ' ')
+                # Убираем лишние пробелы
+                participant_name = ' '.join(participant_name.split())
+            
+            return {
+                'id': participant_id,  # Используем ID самого participant как ID процесса
+                'name': participant_name
+            }
+            
+        except Exception as e:
+            print(f"⚠️ Ошибка при извлечении данных из Collaboration: {e}")
+            return {'id': None, 'name': None}
     
     def _load_process_extension(self, process_id: str):
         """
@@ -1112,6 +1193,579 @@ class BPMNConverter:
                 break
         
         return '\n'.join(lines)
+
+    def _insert_intermediate_tasks_for_yes_flows(self, root):
+        """
+        Вставить промежуточные задачи между шлюзами для разрыва цепочек Gateway → Gateway
+        (перенесено из расширения Process_1d4oa6g46)
+        """
+        print("🔧 Вставка промежуточных задач между шлюзами...")
+        
+        # Поиск всех sequenceFlow с name="да" и вставка промежуточных задач
+        inserted_tasks = self._insert_intermediate_tasks_for_yes_flows_impl(root)
+        
+        if inserted_tasks > 0:
+            print(f"✅ Вставлено промежуточных задач: {inserted_tasks}")
+        else:
+            print("✅ Промежуточные задачи не требуются")
+    
+    def _insert_intermediate_tasks_for_yes_flows_impl(self, root) -> int:
+        """
+        Найти все sequenceFlow с name="да" и вставить промежуточные задачи между шлюзами
+        
+        Returns:
+            int: Количество вставленных задач
+        """
+        print("   🔍 Поиск sequenceFlow с name='да' для вставки промежуточных задач...")
+        
+        inserted_count = 0
+        
+        # Найти все sequenceFlow с name="да"
+        yes_flows = []
+        for flow in root.findall('.//bpmn:sequenceFlow', self.namespaces):
+            name = flow.get('name', '').lower()
+            if name == 'да':
+                yes_flows.append(flow)
+        
+        print(f"   📊 Найдено sequenceFlow с name='да': {len(yes_flows)}")
+        
+        for flow in yes_flows:
+            flow_id = flow.get('id')
+            source_ref = flow.get('sourceRef')
+            
+            if not source_ref:
+                print(f"      ⚠️ Поток {flow_id} не имеет sourceRef")
+                continue
+            
+            print(f"   🔍 Анализируем поток {flow_id}: sourceRef={source_ref}")
+            
+            # Найти исходный Gateway
+            source_gateway = self._find_gateway_by_id(root, source_ref)
+            if not source_gateway:
+                print(f"      ⚠️ Gateway {source_ref} не найден")
+                continue
+            
+            print(f"      ✅ Gateway {source_ref} найден: {source_gateway.tag}")
+            
+            # Получить incoming flows этого Gateway
+            incoming_flows = source_gateway.findall('bpmn:incoming', self.namespaces)
+            print(f"      📊 Найдено incoming потоков для {source_ref}: {len(incoming_flows)}")
+            
+            for i, incoming_element in enumerate(incoming_flows):
+                incoming_flow_id = incoming_element.text
+                print(f"      🔗 Анализируем incoming поток #{i+1}: {incoming_flow_id}")
+                
+                # Найти incoming sequenceFlow
+                incoming_flow = root.find(f'.//bpmn:sequenceFlow[@id="{incoming_flow_id}"]', self.namespaces)
+                
+                if incoming_flow is None:
+                    print(f"         ❌ sequenceFlow {incoming_flow_id} не найден")
+                    continue
+                
+                incoming_source_ref = incoming_flow.get('sourceRef')
+                print(f"         📍 Источник incoming потока: {incoming_source_ref}")
+                
+                # Проверить, является ли источник входящего потока Gateway
+                if incoming_source_ref and incoming_source_ref.startswith('Gateway_'):
+                    print(f"         🎯 Найдена цепочка Gateway→Gateway: {incoming_source_ref} → {source_ref}")
+                    
+                    # Вставить промежуточную задачу
+                    print(f"         🔧 Попытка вставки промежуточной задачи...")
+                    task_inserted = self._insert_task_between_gateways(
+                        root, incoming_flow, source_gateway, source_ref
+                    )
+                    
+                    if task_inserted:
+                        inserted_count += 1
+                        print(f"         ✅ Вставлена промежуточная задача (всего: {inserted_count})")
+                    else:
+                        print(f"         ❌ Не удалось вставить промежуточную задачу")
+                else:
+                    print(f"         ℹ️ Источник не Gateway ('{incoming_source_ref}'), пропускаем")
+        
+        print(f"   📊 Итого вставлено промежуточных задач: {inserted_count}")
+        return inserted_count
+
+    def _find_gateway_by_id(self, root, gateway_id: str):
+        """Найти Gateway по ID"""
+        for gateway_type in ['exclusiveGateway', 'inclusiveGateway', 'parallelGateway']:
+            gateway = root.find(f'.//bpmn:{gateway_type}[@id="{gateway_id}"]', self.namespaces)
+            if gateway is not None:
+                return gateway
+        return None
+
+    def _insert_task_between_gateways(self, root, incoming_flow, target_gateway, target_gateway_id: str) -> bool:
+        """
+        Вставить промежуточную задачу между двумя Gateway
+        
+        Args:
+            root: Корневой элемент BPMN XML
+            incoming_flow: sequenceFlow который нужно перенаправить
+            target_gateway: Gateway, в который нужно вставить задачу
+            target_gateway_id: ID целевого Gateway
+        
+        Returns:
+            bool: True если задача была вставлена
+        """
+        try:
+            incoming_flow_id = incoming_flow.get('id')
+            print(f"         🔧 Начинаем вставку задачи для incoming_flow: {incoming_flow_id}")
+            
+            # Генерировать уникальные ID
+            new_task_id = self._generate_unique_activity_id(root)
+            new_flow_id = self._generate_unique_flow_id(root)
+            print(f"         🆔 Сгенерированы ID: task={new_task_id}, flow={new_flow_id}")
+            
+            # Получить name целевого Gateway для формирования имени задачи
+            gateway_name = target_gateway.get('name', 'условие')
+            task_name = f"Выяснить: {gateway_name}"
+            
+            print(f"         📝 Создание задачи {new_task_id}: '{task_name}'")
+            
+            # Найти элемент process для вставки новой задачи
+            process_element = root.find('.//bpmn:process', self.namespaces)
+            if not process_element:
+                print(f"         ❌ Элемент process не найден")
+                return False
+            
+            print(f"         ✅ Process элемент найден")
+            
+            # Создать новую задачу (serviceTask для совместимости с Camunda)
+            new_task = ET.SubElement(process_element, f'{{{self.namespaces["bpmn"]}}}serviceTask')
+            new_task.set('id', new_task_id)
+            new_task.set('name', task_name)
+            new_task.set(f'{{{self.namespaces["camunda"]}}}type', 'external')
+            new_task.set(f'{{{self.namespaces["camunda"]}}}topic', 'bitrix_create_task')
+            
+            # Создать extensionElements с необходимыми свойствами
+            extension_elements = ET.SubElement(new_task, f'{{{self.namespaces["bpmn"]}}}extensionElements')
+            properties = ET.SubElement(extension_elements, f'{{{self.namespaces["camunda"]}}}properties')
+            
+            # Добавить свойства для определения результата
+            result_expected_prop = ET.SubElement(properties, f'{{{self.namespaces["camunda"]}}}property')
+            result_expected_prop.set('name', 'UF_RESULT_EXPECTED')
+            result_expected_prop.set('value', 'true')
+            
+            result_question_prop = ET.SubElement(properties, f'{{{self.namespaces["camunda"]}}}property')
+            result_question_prop.set('name', 'UF_RESULT_QUESTION')
+            result_question_prop.set('value', gateway_name)
+            
+            # Добавить ответственного по умолчанию
+            assignee_name_prop = ET.SubElement(properties, f'{{{self.namespaces["camunda"]}}}property')
+            assignee_name_prop.set('name', 'assigneeName')
+            assignee_name_prop.set('value', 'Рук. отдела разрешительной док-ции')
+            
+            assignee_id_prop = ET.SubElement(properties, f'{{{self.namespaces["camunda"]}}}property')
+            assignee_id_prop.set('name', 'assigneeId')
+            assignee_id_prop.set('value', '15297786')
+            
+            print(f"         ✅ Создан элемент serviceTask с extensionElements: {new_task_id}")
+            
+            # Добавить incoming для новой задачи (из исходного потока)
+            task_incoming = ET.SubElement(new_task, f'{{{self.namespaces["bpmn"]}}}incoming')
+            task_incoming.text = incoming_flow_id
+            print(f"         ✅ Добавлен incoming: {incoming_flow_id}")
+            
+            # Добавить outgoing для новой задачи (новый поток к целевому Gateway)
+            task_outgoing = ET.SubElement(new_task, f'{{{self.namespaces["bpmn"]}}}outgoing')
+            task_outgoing.text = new_flow_id
+            print(f"         ✅ Добавлен outgoing: {new_flow_id}")
+            
+            # Создать новый sequenceFlow от задачи к целевому Gateway
+            new_sequence_flow = ET.SubElement(process_element, f'{{{self.namespaces["bpmn"]}}}sequenceFlow')
+            new_sequence_flow.set('id', new_flow_id)
+            new_sequence_flow.set('sourceRef', new_task_id)
+            new_sequence_flow.set('targetRef', target_gateway_id)
+            print(f"         ✅ Создан новый sequenceFlow: {new_flow_id} ({new_task_id} → {target_gateway_id})")
+            
+            # Обновить исходный incoming_flow: теперь он ведет к новой задаче
+            old_target = incoming_flow.get('targetRef')
+            incoming_flow.set('targetRef', new_task_id)
+            print(f"         ✅ Обновлен incoming_flow {incoming_flow_id}: {old_target} → {new_task_id}")
+            
+            # Обновить incoming потоки целевого Gateway
+            self._update_gateway_incoming_flows(target_gateway, incoming_flow_id, new_flow_id)
+            print(f"         ✅ Обновлены incoming потоки Gateway {target_gateway_id}")
+            
+            # Создать диаграммные элементы для новых объектов
+            self._create_diagram_elements_for_task(root, new_task_id, new_flow_id, target_gateway_id, incoming_flow_id)
+            
+            print(f"         🎉 Задача {new_task_id} успешно вставлена")
+            print(f"         📎 Итоговая цепочка: ...→{new_task_id}→{target_gateway_id}")
+            
+            return True
+            
+        except Exception as e:
+            print(f"         ❌ Ошибка при вставке задачи: {e}")
+            import traceback
+            print(f"         🔍 Детали ошибки:")
+            traceback.print_exc(limit=2)
+            return False
+
+    def _update_gateway_incoming_flows(self, gateway, old_flow_id: str, new_flow_id: str):
+        """Обновить incoming потоки Gateway"""
+        
+        # Найти и обновить соответствующий incoming элемент
+        for incoming in gateway.findall('bpmn:incoming', self.namespaces):
+            if incoming.text == old_flow_id:
+                incoming.text = new_flow_id
+                break
+
+    def _create_diagram_elements_for_task(self, root, new_task_id: str, new_flow_id: str, 
+                                        target_gateway_id: str, incoming_flow_id: str) -> None:
+        """Создать диаграммные элементы для новой задачи и потока"""
+        
+        try:
+            # Найти BPMNDiagram
+            bpmn_diagram = root.find('.//bpmndi:BPMNDiagram', self.namespaces)
+            if bpmn_diagram is None:
+                print(f"         ⚠️ BPMNDiagram не найден, пропускаем создание диаграммных элементов")
+                return
+            
+            bpmn_plane = bpmn_diagram.find('.//bpmndi:BPMNPlane', self.namespaces)
+            if bpmn_plane is None:
+                print(f"         ⚠️ BPMNPlane не найден, пропускаем создание диаграммных элементов")
+                return
+            
+            # Получить координаты существующих элементов для позиционирования
+            source_coords, target_coords = self._get_positioning_coordinates_for_task(
+                root, incoming_flow_id, target_gateway_id
+            )
+            
+            if source_coords is None or target_coords is None:
+                print(f"         ⚠️ Не удалось получить координаты для позиционирования")
+                return
+            
+            # Вычислить позицию для новой задачи
+            task_width = 100
+            task_height = 80
+            
+            # Расстояние между элементами
+            distance_from_source = 120  # минимальное расстояние от источника
+            distance_to_target = 120   # минимальное расстояние до цели
+            
+            # Вычисляем позицию с учетом минимальных расстояний
+            if source_coords[0] + distance_from_source + task_width + distance_to_target <= target_coords[0]:
+                # Есть достаточно места между источником и целью
+                task_x = source_coords[0] + distance_from_source
+                task_y = (source_coords[1] + target_coords[1]) // 2 - task_height // 2
+            else:
+                # Недостаточно места, размещаем в середине с минимальным расстоянием
+                available_space = target_coords[0] - source_coords[0]
+                if available_space > task_width + 40:  # минимальный зазор 20 пикселей с каждой стороны
+                    task_x = source_coords[0] + (available_space - task_width) // 2
+                else:
+                    # Совсем мало места, размещаем сразу после источника
+                    task_x = source_coords[0] + 20
+                task_y = (source_coords[1] + target_coords[1]) // 2 - task_height // 2
+            
+            # Проверяем, что координаты разумные
+            if task_x < 0:
+                task_x = 50
+            if task_y < 0:
+                task_y = 50
+            
+            print(f"         📐 Позиционирование задачи: x={task_x}, y={task_y} (размер: {task_width}x{task_height})")
+            print(f"         📏 Расстояния: от источника={task_x - source_coords[0]}, до цели={target_coords[0] - (task_x + task_width)}")
+            
+            # Создать BPMNShape для новой задачи
+            task_shape = ET.SubElement(bpmn_plane, f'{{{self.namespaces["bpmndi"]}}}BPMNShape')
+            task_shape.set('id', f'{new_task_id}_di')
+            task_shape.set('bpmnElement', new_task_id)
+            
+            task_bounds = ET.SubElement(task_shape, f'{{{self.namespaces["dc"]}}}Bounds')
+            task_bounds.set('x', str(task_x))
+            task_bounds.set('y', str(task_y))
+            task_bounds.set('width', str(task_width))
+            task_bounds.set('height', str(task_height))
+            
+            print(f"         ✅ Создан BPMNShape для задачи {new_task_id}")
+            
+            # Создать BPMNEdge для нового sequenceFlow
+            flow_edge = ET.SubElement(bpmn_plane, f'{{{self.namespaces["bpmndi"]}}}BPMNEdge')
+            flow_edge.set('id', f'{new_flow_id}_di')
+            flow_edge.set('bpmnElement', new_flow_id)
+            
+            # Waypoints для нового потока (от задачи к целевому Gateway)
+            start_waypoint = ET.SubElement(flow_edge, f'{{{self.namespaces["di"]}}}waypoint')
+            start_waypoint.set('x', str(task_x + task_width))
+            start_waypoint.set('y', str(task_y + task_height // 2))
+            
+            end_waypoint = ET.SubElement(flow_edge, f'{{{self.namespaces["di"]}}}waypoint')
+            end_waypoint.set('x', str(target_coords[0]))
+            end_waypoint.set('y', str(target_coords[1]))
+            
+            print(f"         ✅ Создан BPMNEdge для потока {new_flow_id}")
+            
+            # Обновить waypoints существующего incoming потока
+            self._update_existing_flow_waypoints(root, incoming_flow_id, task_x, task_y, task_height)
+            
+            print(f"         ✅ Диаграммные элементы созданы успешно")
+            
+        except Exception as e:
+            print(f"         ⚠️ Ошибка при создании диаграммных элементов: {e}")
+
+    def _get_positioning_coordinates_for_task(self, root, incoming_flow_id: str, 
+                                           target_gateway_id: str) -> tuple:
+        """Получить координаты для позиционирования новой задачи"""
+        
+        try:
+            print(f"         🔍 Анализ координат для incoming_flow_id={incoming_flow_id}, target_gateway_id={target_gateway_id}")
+            
+            # Найти incoming sequenceFlow для получения координат источника
+            incoming_flow = root.find(f'.//bpmn:sequenceFlow[@id="{incoming_flow_id}"]', self.namespaces)
+            if incoming_flow is None:
+                print(f"         ⚠️ Incoming flow {incoming_flow_id} не найден")
+                return None, None
+            
+            source_ref = incoming_flow.get('sourceRef')
+            if not source_ref:
+                print(f"         ⚠️ sourceRef не найден для incoming flow {incoming_flow_id}")
+                return None, None
+            
+            print(f"         📍 Источник: {source_ref}")
+            
+            # Получить координаты источника
+            source_shape = root.find(f'.//bpmndi:BPMNShape[@bpmnElement="{source_ref}"]', self.namespaces)
+            source_coords = None
+            if source_shape is not None:
+                bounds = source_shape.find('dc:Bounds', self.namespaces)
+                if bounds is not None:
+                    source_x = int(bounds.get('x', 0))
+                    source_y = int(bounds.get('y', 0))
+                    source_width = int(bounds.get('width', 100))
+                    source_height = int(bounds.get('height', 80))
+                    # Правая сторона источника (точка выхода)
+                    source_coords = (source_x + source_width, source_y + source_height // 2)
+                    print(f"         📐 Координаты источника: {source_ref} = ({source_x}, {source_y}, {source_width}x{source_height}) → exit=({source_coords[0]}, {source_coords[1]})")
+                else:
+                    print(f"         ⚠️ Bounds не найден для источника {source_ref}")
+            else:
+                print(f"         ⚠️ Shape не найден для источника {source_ref}")
+            
+            # Получить координаты целевого Gateway
+            target_shape = root.find(f'.//bpmndi:BPMNShape[@bpmnElement="{target_gateway_id}"]', self.namespaces)
+            target_coords = None
+            if target_shape is not None:
+                bounds = target_shape.find('dc:Bounds', self.namespaces)
+                if bounds is not None:
+                    target_x = int(bounds.get('x', 0))
+                    target_y = int(bounds.get('y', 0))
+                    target_width = int(bounds.get('width', 50))
+                    target_height = int(bounds.get('height', 50))
+                    # Левая сторона цели (точка входа)
+                    target_coords = (target_x, target_y + target_height // 2)
+                    print(f"         📐 Координаты цели: {target_gateway_id} = ({target_x}, {target_y}, {target_width}x{target_height}) → entry=({target_coords[0]}, {target_coords[1]})")
+                else:
+                    print(f"         ⚠️ Bounds не найден для цели {target_gateway_id}")
+            else:
+                print(f"         ⚠️ Shape не найден для цели {target_gateway_id}")
+            
+            # Проверяем разумность координат
+            if source_coords and target_coords:
+                # Убеждаемся, что координаты в разумных пределах
+                if (abs(source_coords[0]) > 10000 or abs(source_coords[1]) > 10000 or 
+                    abs(target_coords[0]) > 10000 or abs(target_coords[1]) > 10000):
+                    print(f"         ⚠️ Координаты вне разумных пределов, используем значения по умолчанию")
+                    # Используем разумные значения по умолчанию
+                    source_coords = (1000, 500)
+                    target_coords = (1200, 500)
+            
+            print(f"         ✅ Итоговые координаты: source={source_coords}, target={target_coords}")
+            return source_coords, target_coords
+            
+        except Exception as e:
+            print(f"         ⚠️ Ошибка при получении координат: {e}")
+            return None, None
+
+    def _update_existing_flow_waypoints(self, root, flow_id: str, 
+                                       task_x: int, task_y: int, task_height: int) -> None:
+        """Обновить waypoints существующего потока для подключения к новой задаче"""
+        
+        try:
+            # Найти диаграммный элемент потока
+            flow_edge = root.find(f'.//bpmndi:BPMNEdge[@bpmnElement="{flow_id}"]', self.namespaces)
+            if flow_edge is None:
+                print(f"         ⚠️ BPMNEdge для потока {flow_id} не найден")
+                return
+            
+            # Обновить конечный waypoint (теперь он ведет к новой задаче)
+            waypoints = flow_edge.findall('di:waypoint', self.namespaces)
+            if len(waypoints) >= 2:
+                last_waypoint = waypoints[-1]
+                last_waypoint.set('x', str(task_x))
+                last_waypoint.set('y', str(task_y + task_height // 2))
+                print(f"         ✅ Обновлен waypoint для потока {flow_id}")
+            
+        except Exception as e:
+            print(f"         ⚠️ Ошибка при обновлении waypoints: {e}")
+
+    def _generate_unique_activity_id(self, root) -> str:
+        """Генерировать уникальный ID для Activity"""
+        import random
+        import string
+        
+        existing_ids = set()
+        
+        # Собрать все существующие ID элементов
+        for element in root.findall('.//*[@id]', self.namespaces):
+            element_id = element.get('id')
+            if element_id:
+                existing_ids.add(element_id)
+        
+        # Генерировать уникальный ID
+        while True:
+            # Генерируем 7 случайных символов (буквы и цифры)
+            random_suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=7))
+            new_id = f"Activity_{random_suffix}"
+            
+            if new_id not in existing_ids:
+                return new_id
+
+    def _generate_unique_flow_id(self, root) -> str:
+        """Генерировать уникальный ID для sequenceFlow"""
+        import random
+        import string
+        
+        existing_ids = set()
+        
+        # Собрать все существующие ID элементов
+        for element in root.findall('.//*[@id]', self.namespaces):
+            element_id = element.get('id')
+            if element_id:
+                existing_ids.add(element_id)
+        
+        # Генерировать уникальный ID
+        while True:
+            # Генерируем 7 случайных символов (буквы и цифры)
+            random_suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=7))
+            new_id = f"Flow_{random_suffix}"
+            
+            if new_id not in existing_ids:
+                return new_id
+            
+    def _assign_responsible_to_unassigned_tasks(self, root):
+        """
+        Назначить ответственных для всех Activity без назначенных ответственных
+        (перенесено из расширения Process_1d4oa6g46)
+        """
+        print("🔧 Назначение ответственных для задач без назначенных ответственных...")
+        
+        # Данные ответственного по умолчанию (руководитель проекта)
+        DEFAULT_ASSIGNEE_NAME = "Рук. отдела разрешительной док-ции"
+        DEFAULT_ASSIGNEE_ID = "15297786"
+        
+        assigned_count = 0
+        
+        # Найти все serviceTask элементы
+        for service_task in root.findall('.//bpmn:serviceTask', self.namespaces):
+            task_id = service_task.get('id')
+            task_name = service_task.get('name', 'Без имени')
+            
+            # Проверить, есть ли уже назначенный ответственный
+            has_assignee = self._has_assignee_properties(service_task)
+            
+            if not has_assignee:
+                print(f"   🎯 Найдена задача без ответственного: {task_id} ({task_name})")
+                
+                # Назначить ответственного
+                success = self._add_assignee_to_task(service_task, DEFAULT_ASSIGNEE_NAME, DEFAULT_ASSIGNEE_ID)
+                
+                if success:
+                    assigned_count += 1
+                    print(f"   ✅ Назначен ответственный для {task_id}: {DEFAULT_ASSIGNEE_NAME}")
+                else:
+                    print(f"   ❌ Ошибка при назначении ответственного для {task_id}")
+            else:
+                print(f"   ℹ️ Задача {task_id} уже имеет назначенного ответственного, пропускаем")
+        
+        if assigned_count > 0:
+            print(f"✅ Назначено ответственных: {assigned_count}")
+        else:
+            print("✅ Все Activity уже имеют назначенных ответственных")
+
+    def _has_assignee_properties(self, service_task) -> bool:
+        """
+        Проверить, есть ли у serviceTask назначенный ответственный
+        
+        Args:
+            service_task: Элемент serviceTask
+        
+        Returns:
+            bool: True если ответственный назначен
+        """
+        try:
+            # Найти extensionElements
+            extension_elements = service_task.find('bpmn:extensionElements', self.namespaces)
+            if extension_elements is None:
+                return False
+            
+            # Найти camunda:properties
+            properties = extension_elements.find('camunda:properties', self.namespaces)
+            if properties is None:
+                return False
+            
+            # Проверить наличие свойства assigneeId
+            for prop in properties.findall('camunda:property', self.namespaces):
+                if prop.get('name') == 'assigneeId':
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            print(f"      ⚠️ Ошибка при проверке ответственного: {e}")
+            return False
+
+    def _add_assignee_to_task(self, service_task, assignee_name: str, assignee_id: str) -> bool:
+        """
+        Добавить ответственного к serviceTask
+        
+        Args:
+            service_task: Элемент serviceTask
+            assignee_name: Имя ответственного
+            assignee_id: ID ответственного
+        
+        Returns:
+            bool: True если ответственный успешно добавлен
+        """
+        try:
+            # Найти или создать extensionElements
+            extension_elements = service_task.find('bpmn:extensionElements', self.namespaces)
+            if extension_elements is None:
+                extension_elements = ET.SubElement(
+                    service_task, 
+                    f'{{{self.namespaces["bpmn"]}}}extensionElements'
+                )
+            
+            # Найти или создать camunda:properties
+            properties = extension_elements.find('camunda:properties', self.namespaces)
+            if properties is None:
+                properties = ET.SubElement(
+                    extension_elements,
+                    f'{{{self.namespaces["camunda"]}}}properties'
+                )
+            
+            # Добавить свойство assigneeName
+            assignee_name_prop = ET.SubElement(
+                properties,
+                f'{{{self.namespaces["camunda"]}}}property'
+            )
+            assignee_name_prop.set('name', 'assigneeName')
+            assignee_name_prop.set('value', assignee_name)
+            
+            # Добавить свойство assigneeId
+            assignee_id_prop = ET.SubElement(
+                properties,
+                f'{{{self.namespaces["camunda"]}}}property'
+            )
+            assignee_id_prop.set('name', 'assigneeId')
+            assignee_id_prop.set('value', assignee_id)
+            
+            return True
+            
+        except Exception as e:
+            print(f"      ❌ Ошибка при добавлении ответственного: {e}")
+            return False
 
 
 def main():
