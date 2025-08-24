@@ -1,0 +1,24 @@
+elementId;elementType;elementName;assigneeEdgeId;description
+Activity_0xmi3rr;callActivity;Отражение авансовых отчетов в УУ;22602233;ЧЕКЛИСТ: https://bx.eg-holding.ru/workgroups/group/43/tasks/task/view/1564/
+Activity_1nptpu5;callActivity;Проведение выручки по договорам ДДУ и ДКП в УУ;22602054;ЧЕКЛИСТ: https://bx.eg-holding.ru/workgroups/group/43/tasks/task/view/1566/
+Activity_0pykqqg;callActivity;Проведение выручки КАСП в УУ;22602199;ЧЕКЛИСТ: https://bx.eg-holding.ru/workgroups/group/43/tasks/task/view/1565/
+Activity_0yxi3uz;callActivity;Проведение выручки по договорам бронирования в УУ;22602310;ЧЕКЛИСТ: https://bx.eg-holding.ru/workgroups/group/43/tasks/task/view/1566/
+Activity_15spj7b;callActivity;Начисление процентов банка в УУ;22602243;ЧЕКЛИСТ: https://bx.eg-holding.ru/workgroups/group/43/tasks/task/view/1543/
+Activity_0aci2ni;callActivity;Начисление процентов по займам в УУ;22602248;ЧЕКЛИСТ: https://bx.eg-holding.ru/workgroups/group/43/tasks/task/view/1570/
+Activity_1tc6whe;callActivity;Отражение в УУ налогов (кроме ФОТ);22602348;ЧЕКЛИСТ: https://bx.eg-holding.ru/workgroups/group/43/tasks/task/view/1515/
+Activity_07j9woc;callActivity;Отражение начисления заработной платы в УУ;22602297;ЧЕКЛИСТ: https://bx.eg-holding.ru/workgroups/group/43/tasks/task/view/1563/
+Activity_0nv3rqt;callActivity;Формирование и проверка кредиторской задолжности по ЗП;22602383;ЧЕКЛИСТ: https://bx.eg-holding.ru/workgroups/group/43/tasks/task/view/1563/
+Activity_1dk2oxs;callActivity;Отражение в УУ налогов с ФОТ (БДР);22602385;ЧЕКЛИСТ: https://bx.eg-holding.ru/workgroups/group/43/tasks/task/view/1563/
+Activity_1u9eyft;callActivity;Сверка по затратным счетам;22602362;ЧЕКЛИСТ: https://bx.eg-holding.ru/workgroups/group/43/tasks/task/view/1567/
+Activity_02s8kcf;callActivity;Закрытие счетов 50, 51;22602366;ЧЕКЛИСТ: https://bx.eg-holding.ru/workgroups/group/43/tasks/task/view/1567/
+Activity_0zt16ji;callActivity;Закрытие счетов 20, 90;;
+Activity_0mu58lh;callActivity;Закрытие внутригрупповых займов;;
+Activity_0et1eda;callActivity;Проверка формирования управленческого баланса в 1С;;
+Activity_1vpjw6a;callActivity;Подготовка и анализ Консолидированной управленческой отчётности;;
+Activity_0t8300x;callActivity;Сверка 20 счета с оборотами бюджета;22602377;ЧЕКЛИСТ: https://bx.eg-holding.ru/workgroups/group/43/tasks/task/view/1569/
+Activity_1l9mnpa;callActivity;Сверка оборотов бюджета с 90 счетом;22602324;ЧЕКЛИСТ: https://bx.eg-holding.ru/workgroups/group/43/tasks/task/view/1572/
+Activity_1yr8rb8;callActivity;Разработка методологии ведения управленческого учета;;
+Activity_1v4d2ep;callActivity;Актуализация ведения УУ;;
+Activity_0fiiqnf;callActivity;Инвентаризация активов и пассивов в УУ;;
+Activity_0sr43rg;callActivity;Планирование автоматических регулярных платежей;;
+Activity_0sp8q0r;callActivity;Отражение в УУ оплат по ДДУ при раскрытии эскроу счетов;;
