@@ -87,9 +87,13 @@ class ChecklistParser:
     def __init__(self):
         # Поддерживаемые маркеры заголовков чек-листов
         self.header_patterns = [
-            # Новый формат с ссылками на Bitrix24
+            # Новый формат с ссылками на Bitrix24 (в HTML теге <a>)
             (r'<p>ЧЕКЛИСТ:\s*<a[^>]+href=["\']([^"\']*bx\.eg-holding\.ru[^"\']*)["\'][^>]*>.*?</a></p>', 'bitrix_link'),
             (r'<p>CHECKLIST:\s*<a[^>]+href=["\']([^"\']*bx\.eg-holding\.ru[^"\']*)["\'][^>]*>.*?</a></p>', 'bitrix_link'),
+            
+            # Простые ссылки на Bitrix24 без HTML тега <a>
+            (r'<p>ЧЕКЛИСТ:\s*(https?://[^<\s]*bx\.eg-holding\.ru[^<\s]*)</p>', 'bitrix_link'),
+            (r'<p>CHECKLIST:\s*(https?://[^<\s]*bx\.eg-holding\.ru[^<\s]*)</p>', 'bitrix_link'),
             
             # Рекомендуемый формат (HTML версия)
             (r'<p>ЧЕКЛИСТ:\s*([^<]+)</p>', 'optimal_html'),
@@ -200,6 +204,22 @@ class ChecklistParser:
                 seen_names.add(checklist['name'])
         
         return unique_checklists
+    
+    def extract_checklists_for_camunda(self, description: str) -> List[Dict[str, Any]]:
+        """Извлечение чек-листов из описания в формате для Camunda BPMN"""
+        # Получаем полную структуру чек-листов
+        full_checklists = self.extract_checklists_from_description(description)
+        
+        # Упрощаем формат - оставляем только name и items
+        simplified_checklists = []
+        for checklist in full_checklists:
+            simplified_checklist = {
+                'name': checklist.get('name', ''),
+                'items': checklist.get('items', [])
+            }
+            simplified_checklists.append(simplified_checklist)
+        
+        return simplified_checklists
     
     def _extract_items_from_area(self, area: str, format_type: str) -> List[str]:
         """Извлечение пунктов из области текста"""

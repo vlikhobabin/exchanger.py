@@ -12,7 +12,16 @@ import xml.etree.ElementTree as ET
 from typing import Dict, List, Set, Optional
 import uuid
 import re
+import json
 from pathlib import Path
+
+# Импортируем ChecklistParser для работы с чек-листами
+try:
+    from tools.checklist_parser import ChecklistParser
+    CHECKLIST_PARSER_AVAILABLE = True
+except ImportError as e:
+    CHECKLIST_PARSER_AVAILABLE = False
+    print(f"⚠️ ChecklistParser недоступен: {e}")
 
 
 class BPMNConverter:
@@ -103,6 +112,7 @@ class BPMNConverter:
         self._remove_intermediate_events(root)
         self._convert_tasks_to_service_tasks(root)
         self._add_assignee_properties(root)
+        self._add_checklist_properties(root)
         self._add_condition_expressions(root)
         self._fix_element_order(root)
         self._fix_default_flows(root)
@@ -497,6 +507,90 @@ class BPMNConverter:
                         print(f"   ⚠️ Элемент {task_id} имеет {len(assignees_list)} ответственных, добавлен только первый")
         
         print(f"✅ Встроено {added_count} ответственных")
+    
+    def _add_checklist_properties(self, root):
+        """Добавить свойства чек-листов к serviceTask элементам"""
+        if not self.assignees_data:
+            print("📋 Данные об ответственных отсутствуют, пропускаем встраивание чек-листов")
+            return
+        
+        if not CHECKLIST_PARSER_AVAILABLE:
+            print("⚠️ ChecklistParser недоступен, пропускаем встраивание чек-листов")
+            return
+        
+        print("🔧 Встраивание чек-листов в serviceTask элементы...")
+        
+        # Создаем парсер чек-листов
+        checklist_parser = ChecklistParser()
+        
+        added_count = 0
+        
+        # Создаем словарь для быстрого поиска элементов с описаниями по elementId
+        elements_by_id = {}
+        for element in self.assignees_data:
+            element_id = element.get('elementId')
+            description = element.get('description', '')
+            if element_id and description:
+                elements_by_id[element_id] = {
+                    'description': description,
+                    'elementName': element.get('elementName', '')
+                }
+        
+        print(f"   📊 Найдено элементов с описаниями: {len(elements_by_id)}")
+        
+        # Обрабатываем все serviceTask элементы
+        for service_task in root.findall('.//bpmn:serviceTask', self.namespaces):
+            task_id = service_task.get('id')
+            
+            if task_id and task_id in elements_by_id:
+                element_data = elements_by_id[task_id]
+                description = element_data['description']
+                element_name = element_data['elementName']
+                
+                # Парсим чек-листы из описания
+                try:
+                    checklists = checklist_parser.extract_checklists_for_camunda(description)
+                    
+                    if checklists:
+                        # Конвертируем сразу в JSON строку
+                        checklists_json = json.dumps(checklists, ensure_ascii=False, separators=(',', ':'))
+                        
+                        # Ищем или создаем extensionElements
+                        extension_elements = service_task.find('bpmn:extensionElements', self.namespaces)
+                        if extension_elements is None:
+                            extension_elements = ET.SubElement(
+                                service_task, 
+                                f'{{{self.namespaces["bpmn"]}}}extensionElements'
+                            )
+                        
+                        # Ищем или создаем camunda:properties
+                        properties = extension_elements.find('camunda:properties', self.namespaces)
+                        if properties is None:
+                            properties = ET.SubElement(
+                                extension_elements,
+                                f'{{{self.namespaces["camunda"]}}}properties'
+                            )
+                        
+                        # Добавляем свойство checklists
+                        checklist_prop = ET.SubElement(
+                            properties,
+                            f'{{{self.namespaces["camunda"]}}}property'
+                        )
+                        checklist_prop.set('name', 'checklists')
+                        checklist_prop.set('value', checklists_json)
+                        
+                        total_items = sum(len(checklist.get('items', [])) for checklist in checklists)
+                        print(f"   ✅ Добавлены чек-листы для {task_id} ({element_name}): {len(checklists)} списков, {total_items} пунктов")
+                        added_count += 1
+                    else:
+                        print(f"   ℹ️ Чек-листы не найдены в описании элемента {task_id} ({element_name})")
+                        
+                except Exception as e:
+                    print(f"   ❌ Ошибка при парсинге чек-листов для {task_id}: {e}")
+        
+        print(f"✅ Встроено чек-листов в {added_count} элементов")
+    
+
     
     def _add_condition_expressions(self, root):
         """Добавить условные выражения к потокам"""
