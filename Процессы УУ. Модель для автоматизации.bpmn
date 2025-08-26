@@ -1,6 +1,6 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:bioc="http://bpmn.io/schema/bpmn/biocolor/1.0" xmlns:color="http://www.omg.org/spec/BPMN/non-normative/color/1.0" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" id="Definitions_0ddkqgr" targetNamespace="http://bpmn.io/schema/bpmn" exporter="Camunda Modeler" exporterVersion="3.0.0-dev">
-  <bpmn:collaboration id="Collaboration_06ftemy" name="">
+<?xml version='1.0' encoding='utf-8'?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:ns3="http://bpmn.io/schema/bpmn/biocolor/1.0" xmlns:ns4="http://www.omg.org/spec/BPMN/non-normative/color/1.0" id="Definitions_0ddkqgr" targetNamespace="http://bpmn.io/schema/bpmn" exporter="Camunda Modeler" exporterVersion="3.0.0-dev" xmlns:custom="http://eg-holding.ru/bpmn/custom">
+  <bpmn:extensionElements><custom:diagram><custom:id>3f946f12-5071-4a9f-9960-0f57b4c05e45</custom:id><custom:createdOn>2025-08-13T10:19:34.196838</custom:createdOn><custom:updatedOn>2025-08-24T13:29:16.125132</custom:updatedOn><custom:updateBy>lve@eg-holding.ru</custom:updateBy><custom:teamFolderName>УУ и казначейство</custom:teamFolderName><custom:teamFolderId>18438171</custom:teamFolderId><custom:favoritesCount>0</custom:favoritesCount><custom:favored>false</custom:favored><custom:name>Процессы УУ. Модель для автоматизации</custom:name><custom:status>IN_PROGRESS</custom:status><custom:authorUsername>kov@eg-holding.ru</custom:authorUsername><custom:you>false</custom:you><custom:versionNumber>18</custom:versionNumber><custom:description>&lt;p&gt;Описание в закладках настройки диаграммы в подвале окна&lt;/p&gt;</custom:description><custom:public>true</custom:public><custom:type>BPMN</custom:type><custom:autosaveIndex>281</custom:autosaveIndex><custom:processType>ASIS</custom:processType><custom:teamId>e7cf10aa-d686-46a5-9b7f-a5513b86d1d9</custom:teamId><custom:processedOn>2025-08-25T08:15:32.897915</custom:processedOn></custom:diagram></bpmn:extensionElements><bpmn:collaboration id="Collaboration_06ftemy" name="">
     <bpmn:participant id="Participant_0nu1w1b" name="Процессы казначейства и УУ. Модель верхнего уровня" processRef="Process_1d4oa6g46" />
     <bpmn:participant id="Participant_08zscw0" name="Шаблоны задач" processRef="Process_18lm5pj" />
     <bpmn:textAnnotation id="TextAnnotation_0twa3sq">
@@ -156,7 +156,7 @@
       <bpmn:incoming>Flow_1z0bixn</bpmn:incoming>
       <bpmn:outgoing>Flow_0cnxy0g</bpmn:outgoing>
     </bpmn:parallelGateway>
-    <bpmn:exclusiveGateway id="Gateway_1hl0jd8" name="в задаче Начисление процентов по займам в УУ есть тег &#34;квартальный отчет&#34;?">
+    <bpmn:exclusiveGateway id="Gateway_1hl0jd8" name="в задаче Начисление процентов по займам в УУ есть тег &quot;квартальный отчет&quot;?">
       <bpmn:incoming>Flow_0cnxy0g</bpmn:incoming>
       <bpmn:outgoing>Flow_0vxqi70</bpmn:outgoing>
       <bpmn:outgoing>Flow_1fg45n0</bpmn:outgoing>
@@ -275,7 +275,7 @@
       <bpmn:incoming>Flow_0aowms5</bpmn:incoming>
       <bpmn:outgoing>Flow_0a8v0zv</bpmn:outgoing>
     </bpmn:parallelGateway>
-    <bpmn:exclusiveGateway id="Gateway_01aflyb" name="в задаче Начисление процентов по займам в УУ есть тег &#34;квартальный отчет&#34;?">
+    <bpmn:exclusiveGateway id="Gateway_01aflyb" name="в задаче Начисление процентов по займам в УУ есть тег &quot;квартальный отчет&quot;?">
       <bpmn:incoming>Flow_0a8v0zv</bpmn:incoming>
       <bpmn:outgoing>Flow_04gcq5w</bpmn:outgoing>
       <bpmn:outgoing>Flow_0fvbea8</bpmn:outgoing>
@@ -300,27 +300,27 @@
       <bpmndi:BPMNShape id="Event_0lpg9qh_di" bpmnElement="Event_0lpg9qh">
         <dc:Bounds x="-288" y="522" width="36" height="36" />
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Activity_0xmi3rr_di" bpmnElement="Activity_0xmi3rr" bioc:fill="#ffffff" color:background-color="#ffffff">
+      <bpmndi:BPMNShape id="Activity_0xmi3rr_di" bpmnElement="Activity_0xmi3rr" ns3:fill="#ffffff" ns4:background-color="#ffffff">
         <dc:Bounds x="-110" y="500" width="100" height="80" />
         <bpmndi:BPMNLabel />
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Activity_1nptpu5_di" bpmnElement="Activity_1nptpu5" bioc:fill="#ffffff" color:background-color="#ffffff">
+      <bpmndi:BPMNShape id="Activity_1nptpu5_di" bpmnElement="Activity_1nptpu5" ns3:fill="#ffffff" ns4:background-color="#ffffff">
         <dc:Bounds x="-110" y="150" width="100" height="80" />
         <bpmndi:BPMNLabel />
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="BPMNShape_08ji6is" bpmnElement="Activity_0pykqqg" bioc:fill="#ffffff" color:background-color="#ffffff">
+      <bpmndi:BPMNShape id="BPMNShape_08ji6is" bpmnElement="Activity_0pykqqg" ns3:fill="#ffffff" ns4:background-color="#ffffff">
         <dc:Bounds x="-110" y="260" width="100" height="80" />
         <bpmndi:BPMNLabel />
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Activity_0yxi3uz_di" bpmnElement="Activity_0yxi3uz" bioc:fill="#ffffff" color:background-color="#ffffff">
+      <bpmndi:BPMNShape id="Activity_0yxi3uz_di" bpmnElement="Activity_0yxi3uz" ns3:fill="#ffffff" ns4:background-color="#ffffff">
         <dc:Bounds x="-110" y="360" width="100" height="80" />
         <bpmndi:BPMNLabel />
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="BPMNShape_05r2bsr" bpmnElement="Activity_15spj7b" bioc:fill="#ffffff" color:background-color="#ffffff">
+      <bpmndi:BPMNShape id="BPMNShape_05r2bsr" bpmnElement="Activity_15spj7b" ns3:fill="#ffffff" ns4:background-color="#ffffff">
         <dc:Bounds x="-110" y="610" width="100" height="80" />
         <bpmndi:BPMNLabel />
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="BPMNShape_1g2fwh6" bpmnElement="Activity_0aci2ni" bioc:fill="#ffffff" color:background-color="#ffffff">
+      <bpmndi:BPMNShape id="BPMNShape_1g2fwh6" bpmnElement="Activity_0aci2ni" ns3:fill="#ffffff" ns4:background-color="#ffffff">
         <dc:Bounds x="-110" y="720" width="100" height="80" />
         <bpmndi:BPMNLabel />
       </bpmndi:BPMNShape>
@@ -401,7 +401,7 @@
         <dc:Bounds x="1020" y="500" width="100" height="80" />
         <bpmndi:BPMNLabel />
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Activity_0fwifb3_di" bpmnElement="Activity_1l9mnpa" bioc:fill="#ffffff" color:background-color="#ffffff">
+      <bpmndi:BPMNShape id="Activity_0fwifb3_di" bpmnElement="Activity_1l9mnpa" ns3:fill="#ffffff" ns4:background-color="#ffffff">
         <dc:Bounds x="410" y="260" width="100" height="80" />
         <bpmndi:BPMNLabel />
       </bpmndi:BPMNShape>
@@ -623,7 +623,7 @@
         <dc:Bounds x="-150" y="-420" width="115" height="80" />
         <bpmndi:BPMNLabel />
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape id="Activity_0fiiqnf_di" bpmnElement="Activity_0fiiqnf" bioc:fill="#e7fccb" color:background-color="#e7fccb">
+      <bpmndi:BPMNShape id="Activity_0fiiqnf_di" bpmnElement="Activity_0fiiqnf" ns3:fill="#e7fccb" ns4:background-color="#e7fccb">
         <dc:Bounds x="-305" y="-300" width="110" height="80" />
         <bpmndi:BPMNLabel />
       </bpmndi:BPMNShape>

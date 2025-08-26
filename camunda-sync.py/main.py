@@ -4,7 +4,6 @@
 Модуль синхронизации схем процессов между StormBPMN и Camunda
 """
 import sys
-import os
 from loguru import logger
 
 from config import worker_config, stormbpmn_config, camunda_config, sync_config
@@ -12,6 +11,8 @@ from config import worker_config, stormbpmn_config, camunda_config, sync_config
 
 def setup_logging():
     """Настройка логирования"""
+    import os
+    
     # Удаление стандартного обработчика
     logger.remove()
     
@@ -45,12 +46,12 @@ def setup_logging():
         encoding="utf-8"
     )
     
-    # Файл ошибок
+    # Отдельный файл для ошибок
     logger.add(
         "logs/camunda_sync_errors.log",
         format=log_format,
         level="ERROR",
-        rotation="50 MB",
+        rotation="50 MB", 
         retention="60 days",
         compression="zip",
         encoding="utf-8"

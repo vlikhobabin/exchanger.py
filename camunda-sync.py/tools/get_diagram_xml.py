@@ -4,9 +4,10 @@
 
 НАЗНАЧЕНИЕ:
     Загружает BPMN диаграмму в XML формате по ID из StormBPMN и сохраняет локально.
-    Дополнительно получает и сохраняет список ответственных для автоматической
-    интеграции с процессом конвертации в Camunda. Идеально подходит для полного
-    экспорта процессов из StormBPMN.
+    Автоматически добавляет в XML метаданные диаграммы (id, название, статус, автор и др.)
+    через extensionElements с custom namespace. Дополнительно получает и сохраняет 
+    список ответственных для автоматической интеграции с процессом конвертации в Camunda.
+    Идеально подходит для полного экспорта процессов из StormBPMN с сохранением метаданных.
 
 ИСПОЛЬЗОВАНИЕ:
     python get_diagram_xml.py <diagram_id>
@@ -20,11 +21,26 @@
 
 РЕЗУЛЬТАТ:
     Создаются два файла в корне проекта:
-    1. <diagram_name>.bpmn - BPMN диаграмма в XML формате (готова для convert.py)
+    1. <diagram_name>.bpmn - BPMN диаграмма в XML формате с добавленными метаданными (готова для convert.py)
     2. <diagram_name>_assignees.json - список ответственных (автоматически используется convert.py)
+
+ФОРМАТ МЕТАДАННЫХ:
+    В корень <bpmn:definitions> добавляется блок:
+    <bpmn:extensionElements>
+        <custom:diagram>
+            <custom:id>диаграмма_id</custom:id>
+            <custom:name>название_диаграммы</custom:name>
+            <custom:status>статус</custom:status>
+            <custom:authorUsername>автор</custom:authorUsername>
+            <custom:processedOn>2024-01-15T10:30:00</custom:processedOn>
+            ... (все доступные поля из StormBPMN API)
+        </custom:diagram>
+    </bpmn:extensionElements>
 
 ПРИМЕР РЕЗУЛЬТАТА:
     ✅ XML схемы сохранена в файл: Процесс_согласования.bpmn
+    📝 Добавление метаданных диаграммы...
+    ✅ Добавлены метаданные диаграммы: 18 полей
     ✅ Список ответственных сохранен в файл: Процесс_согласования_assignees.json
     📊 Получено 15 ответственных
     
@@ -39,7 +55,9 @@
     - Автоматическая очистка имен файлов от недопустимых символов
     - Ограничение длины имени файла (200 символов)
     - Безопасное сохранение в UTF-8 кодировке
-    - Обработка ошибок при недоступности ответственных
+    - Автоматическое добавление метаданных диаграммы в BPMN XML через extensionElements
+    - Использование custom namespace (xmlns:custom="http://eg-holding.ru/bpmn/custom")
+    - Обработка ошибок при недоступности ответственных или метаданных
 
 ТРЕБОВАНИЯ:
     - Python 3.6+
@@ -70,15 +88,17 @@ import os
 import re
 from pathlib import Path
 from loguru import logger
+import xml.etree.ElementTree as ET
+from datetime import datetime
 
 # Добавляем родительскую папку в путь для импорта
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from stormbpmn_client import StormBPMNClient, StormBPMNAuthError, StormBPMNNotFoundError
+from tools.logging_utils import setup_tool_logging
 
-# Настройка логирования
-logger.remove()
-logger.add(sys.stdout, level="INFO", format="{time:HH:mm:ss} | {level} | {message}")
+# Настройка полноценного логирования (консоль + файлы)
+setup_tool_logging("get_diagram_xml")
 
 def sanitize_filename(filename: str) -> str:
     """Очистка имени файла от недопустимых символов"""
@@ -90,6 +110,109 @@ def sanitize_filename(filename: str) -> str:
     if len(sanitized) > 200:
         sanitized = sanitized[:200]
     return sanitized
+
+def add_diagram_metadata(xml_file_path: Path, diagram_data: dict) -> None:
+    """
+    Добавить метаданные диаграммы в BPMN XML файл
+    
+    Args:
+        xml_file_path: Путь к XML файлу диаграммы
+        diagram_data: Данные диаграммы из API StormBPMN
+    """
+    try:
+        # Регистрируем namespaces для правильного парсинга
+        ET.register_namespace('', 'http://www.omg.org/spec/BPMN/20100524/MODEL')
+        ET.register_namespace('bpmn', 'http://www.omg.org/spec/BPMN/20100524/MODEL')
+        ET.register_namespace('bpmndi', 'http://www.omg.org/spec/BPMN/20100524/DI')
+        ET.register_namespace('dc', 'http://www.omg.org/spec/DD/20100524/DC')
+        ET.register_namespace('di', 'http://www.omg.org/spec/DD/20100524/DI')
+        ET.register_namespace('custom', 'http://eg-holding.ru/bpmn/custom')
+        
+        # Парсим XML файл
+        tree = ET.parse(xml_file_path)
+        root = tree.getroot()
+        
+        logger.debug(f"Парсинг XML файла: {xml_file_path}")
+        
+        # Ищем элемент definitions (корневой элемент)
+        definitions = root
+        if definitions.tag.endswith('}definitions'):
+            # Добавляем custom namespace в атрибуты definitions
+            definitions.set('xmlns:custom', 'http://eg-holding.ru/bpmn/custom')
+            logger.debug("Добавлен custom namespace в definitions")
+        else:
+            logger.error(f"Не найден элемент definitions. Найден: {definitions.tag}")
+            return
+        
+        # Проверяем, есть ли уже extensionElements в definitions
+        extension_elements = None
+        for child in definitions:
+            if child.tag.endswith('}extensionElements'):
+                extension_elements = child
+                logger.debug("Найден существующий extensionElements")
+                break
+        
+        # Если extensionElements не найден, создаем новый
+        if extension_elements is None:
+            # Определяем namespace для BPMN элементов
+            bpmn_ns = ''
+            if definitions.tag.startswith('{'):
+                bpmn_ns = definitions.tag.split('}')[0] + '}'
+            
+            extension_elements = ET.Element(f'{bpmn_ns}extensionElements')
+            # Вставляем extensionElements в начало definitions (после атрибутов)
+            definitions.insert(0, extension_elements)
+            logger.debug("Создан новый extensionElements")
+        
+        # Создаем custom:diagram элемент с метаданными
+        custom_diagram = ET.SubElement(extension_elements, 'custom:diagram')
+        
+        # Добавляем метаданные из diagram_data
+        metadata_fields = [
+            'id', 'createdOn', 'updatedOn', 'updateBy', 'userFolderName', 'teamFolderName',
+            'userFolderId', 'teamFolderId', 'favoritesCount', 'favored', 'name', 'status',
+            'authorUsername', 'you', 'versionNumber', 'description', 'public', 'type',
+            'tags', 'totalApprovals', 'trueApprovals', 'falseApprovals', 'outcommingLinks',
+            'incommingLinks', 'autosaveIndex', 'processType', 'linkedDiagramId',
+            'linkedDiagramName', 'teamId'
+        ]
+        
+        added_count = 0
+        for field in metadata_fields:
+            value = diagram_data.get(field)
+            if value is not None:
+                # Конвертируем значение в строку
+                if isinstance(value, bool):
+                    str_value = str(value).lower()
+                elif isinstance(value, (int, float)):
+                    str_value = str(value)
+                else:
+                    str_value = str(value) if value else ''
+                
+                # Создаем элемент только если значение не пустое
+                if str_value:
+                    element = ET.SubElement(custom_diagram, f'custom:{field}')
+                    element.text = str_value
+                    added_count += 1
+        
+        # Добавляем timestamp обработки
+        processed_element = ET.SubElement(custom_diagram, 'custom:processedOn')
+        processed_element.text = datetime.now().isoformat()
+        added_count += 1
+        
+        # Сохраняем обновленный XML
+        # Используем метод write с xml_declaration для корректного UTF-8 вывода
+        tree.write(xml_file_path, encoding='utf-8', xml_declaration=True)
+        
+        logger.info(f"✅ Добавлены метаданные диаграммы: {added_count} полей")
+        logger.debug(f"Метаданные добавлены в файл: {xml_file_path}")
+        
+    except ET.ParseError as e:
+        logger.error(f"Ошибка парсинга XML: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка при добавлении метаданных: {e}")
+        raise
 
 def save_diagram_xml(diagram_id: str) -> None:
     """Получить и сохранить XML схемы по ID"""
@@ -134,6 +257,14 @@ def save_diagram_xml(diagram_id: str) -> None:
         except Exception as e:
             logger.error(f"Ошибка при сохранении XML файла: {e}")
             sys.exit(1)
+        
+        # Добавление метаданных диаграммы в XML
+        logger.info(f"📝 Добавление метаданных диаграммы...")
+        try:
+            add_diagram_metadata(file_path, diagram)
+        except Exception as e:
+            logger.warning(f"⚠️ Не удалось добавить метаданные: {e}")
+            logger.info("Продолжаем без метаданных...")
         
         # Получение и сохранение списка ответственных
         logger.info(f"📋 Запрос списка ответственных...")

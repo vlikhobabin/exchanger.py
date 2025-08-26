@@ -25,7 +25,8 @@ class BPMNConverter:
             'di': 'http://www.omg.org/spec/DD/20100524/DI',
             'dc': 'http://www.omg.org/spec/DD/20100524/DC',
             'camunda': 'http://camunda.org/schema/1.0/bpmn',
-            'xsi': 'http://www.w3.org/2001/XMLSchema-instance'
+            'xsi': 'http://www.w3.org/2001/XMLSchema-instance',
+            'custom': 'http://eg-holding.ru/bpmn/custom'
         }
         
         # Регистрируем пространства имен для ElementTree
@@ -119,7 +120,9 @@ class BPMNConverter:
         #         print("Сохраняем результат...")
         
         # Встроенная логика из расширения Process_1d4oa6g46 (постобработка)
-        self._assign_responsible_to_unassigned_tasks(root)
+
+        # Назначать ответственных для Activity без назначенных ответственных пока не нужно
+        # self._assign_responsible_to_unassigned_tasks(root)
         
         # Сохраняем результат
         self._save_result(tree, output_file)
@@ -159,20 +162,24 @@ class BPMNConverter:
         """Обновить атрибуты процесса"""
         print("🔧 Обновление атрибутов процесса...")
         
-        # Извлекаем данные из Collaboration/Participant
-        process_data = self._extract_process_data_from_collaboration(root)
+        # Извлекаем данные из расширения custom:diagram
+        process_data = self._extract_process_data_from_extension(root)
         
         # Ищем элемент process
         process = root.find('.//bpmn:process', self.namespaces)
         if process is not None:
-            # Получаем ID процесса
+            # Получаем текущий ID процесса
             current_id = process.get('id')
             
-            # Если из Collaboration получили новый ID, используем его
-            if process_data['id'] and process_data['id'] != current_id:
-                print(f"🔄 Обновляем ID процесса: {current_id} → {process_data['id']}")
-                process.set('id', process_data['id'])
-                current_id = process_data['id']
+            # Если из расширения получили ID, используем его как основу для ID процесса
+            if process_data['id']:
+                # Преобразуем custom:id в подходящий для процесса формат
+                # Например, из UUID делаем Process_uuid
+                new_id = f"Process_{process_data['id'].replace('-', '_')}"
+                if new_id != current_id:
+                    print(f"🔄 Обновляем ID процесса: {current_id} → {new_id}")
+                    process.set('id', new_id)
+                    current_id = new_id
             elif not current_id:
                 # Если вообще нет ID, ставим дефолтный (маловероятно)
                 current_id = 'Process_default'
@@ -185,7 +192,7 @@ class BPMNConverter:
             # Добавляем только необходимые Camunda атрибуты
             process.set('{http://camunda.org/schema/1.0/bpmn}historyTimeToLive', '1')
             
-            # Обновляем name процесса из данных Collaboration/Participant
+            # Обновляем name процесса из данных расширения custom:diagram
             if process_data['name']:
                 print(f"🔄 Обновляем название процесса: {process_data['name']}")
                 process.set('name', process_data['name'])
@@ -1077,6 +1084,62 @@ class BPMNConverter:
             print(f"⚠️ Ошибка при извлечении данных из Collaboration: {e}")
             return {'id': None, 'name': None}
     
+    def _extract_process_data_from_extension(self, root) -> Dict[str, Optional[str]]:
+        """
+        Извлечь данные процесса из custom:diagram расширения
+        
+        Returns:
+            Dict с ключами 'id' и 'name' процесса, извлеченными из custom:diagram
+        """
+        try:
+            # Ищем extensionElements
+            extension_elements = root.find('.//bpmn:extensionElements', self.namespaces)
+            if extension_elements is None:
+                print("📋 extensionElements не найден, используем существующие данные процесса")
+                # Если нет extension, берем данные из самого процесса
+                process = root.find('.//bpmn:process', self.namespaces)
+                if process is not None:
+                    return {
+                        'id': process.get('id'),
+                        'name': process.get('name')
+                    }
+                return {'id': None, 'name': None}
+            
+            # Ищем custom:diagram
+            custom_diagram = extension_elements.find('custom:diagram', self.namespaces)
+            if custom_diagram is None:
+                print("⚠️ custom:diagram не найден в extensionElements")
+                return {'id': None, 'name': None}
+            
+            # Извлекаем custom:id и custom:name
+            custom_id_elem = custom_diagram.find('custom:id', self.namespaces)
+            custom_name_elem = custom_diagram.find('custom:name', self.namespaces)
+            
+            custom_id = custom_id_elem.text if custom_id_elem is not None else None
+            custom_name = custom_name_elem.text if custom_name_elem is not None else None
+            
+            print(f"🔍 Найдены данные из custom:diagram:")
+            print(f"   ID: {custom_id}")
+            print(f"   Name: {custom_name}")
+            
+            # Очистка имени от HTML символов если есть
+            if custom_name:
+                import html
+                custom_name = html.unescape(custom_name)
+                # Заменяем переносы строк на пробелы
+                custom_name = custom_name.replace('\n', ' ').replace('\r', ' ')
+                # Убираем лишние пробелы
+                custom_name = ' '.join(custom_name.split())
+            
+            return {
+                'id': custom_id,
+                'name': custom_name
+            }
+            
+        except Exception as e:
+            print(f"⚠️ Ошибка при извлечении данных из custom:diagram: {e}")
+            return {'id': None, 'name': None}
+    
     def _load_process_extension(self, process_id: str):
         """
         Загрузить модуль расширения для конкретного процесса
@@ -1350,14 +1413,15 @@ class BPMNConverter:
             result_question_prop.set('name', 'UF_RESULT_QUESTION')
             result_question_prop.set('value', gateway_name)
             
+            # Не нужно добавлять ответственного по умолчанию пока
             # Добавить ответственного по умолчанию
-            assignee_name_prop = ET.SubElement(properties, f'{{{self.namespaces["camunda"]}}}property')
-            assignee_name_prop.set('name', 'assigneeName')
-            assignee_name_prop.set('value', 'Рук. отдела разрешительной док-ции')
+            # assignee_name_prop = ET.SubElement(properties, f'{{{self.namespaces["camunda"]}}}property')
+            # assignee_name_prop.set('name', 'assigneeName')
+            # assignee_name_prop.set('value', 'Рук. отдела разрешительной док-ции')
             
-            assignee_id_prop = ET.SubElement(properties, f'{{{self.namespaces["camunda"]}}}property')
-            assignee_id_prop.set('name', 'assigneeId')
-            assignee_id_prop.set('value', '15297786')
+            # assignee_id_prop = ET.SubElement(properties, f'{{{self.namespaces["camunda"]}}}property')
+            # assignee_id_prop.set('name', 'assigneeId')
+            # assignee_id_prop.set('value', '15297786')
             
             print(f"         ✅ Создан элемент serviceTask с extensionElements: {new_task_id}")
             
