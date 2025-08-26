@@ -25,7 +25,7 @@
     2. <diagram_name>_assignees.json - список ответственных (автоматически используется convert.py)
 
 ФОРМАТ МЕТАДАННЫХ:
-    В корень <bpmn:definitions> добавляется блок:
+    В элемент <bpmn:process> добавляется блок:
     <bpmn:extensionElements>
         <custom:diagram>
             <custom:id>диаграмма_id</custom:id>
@@ -55,7 +55,7 @@
     - Автоматическая очистка имен файлов от недопустимых символов
     - Ограничение длины имени файла (200 символов)
     - Безопасное сохранение в UTF-8 кодировке
-    - Автоматическое добавление метаданных диаграммы в BPMN XML через extensionElements
+    - Автоматическое добавление метаданных диаграммы в BPMN XML через extensionElements в элементе process
     - Использование custom namespace (xmlns:custom="http://eg-holding.ru/bpmn/custom")
     - Обработка ошибок при недоступности ответственных или метаданных
 
@@ -144,15 +144,27 @@ def add_diagram_metadata(xml_file_path: Path, diagram_data: dict) -> None:
             logger.error(f"Не найден элемент definitions. Найден: {definitions.tag}")
             return
         
-        # Проверяем, есть ли уже extensionElements в definitions
-        extension_elements = None
+        # Ищем элемент process (правильное место для extensionElements)
+        process_element = None
         for child in definitions:
-            if child.tag.endswith('}extensionElements'):
-                extension_elements = child
-                logger.debug("Найден существующий extensionElements")
+            if child.tag.endswith('}process'):
+                process_element = child
+                logger.debug("Найден элемент process")
                 break
         
-        # Если extensionElements не найден, создаем новый
+        if process_element is None:
+            logger.error("Не найден элемент process в BPMN схеме")
+            return
+        
+        # Проверяем, есть ли уже extensionElements в process
+        extension_elements = None
+        for child in process_element:
+            if child.tag.endswith('}extensionElements'):
+                extension_elements = child
+                logger.debug("Найден существующий extensionElements в process")
+                break
+        
+        # Если extensionElements не найден, создаем новый в process
         if extension_elements is None:
             # Определяем namespace для BPMN элементов
             bpmn_ns = ''
@@ -160,9 +172,9 @@ def add_diagram_metadata(xml_file_path: Path, diagram_data: dict) -> None:
                 bpmn_ns = definitions.tag.split('}')[0] + '}'
             
             extension_elements = ET.Element(f'{bpmn_ns}extensionElements')
-            # Вставляем extensionElements в начало definitions (после атрибутов)
-            definitions.insert(0, extension_elements)
-            logger.debug("Создан новый extensionElements")
+            # Вставляем extensionElements в начало process (после атрибутов)
+            process_element.insert(0, extension_elements)
+            logger.debug("Создан новый extensionElements в process")
         
         # Создаем custom:diagram элемент с метаданными
         custom_diagram = ET.SubElement(extension_elements, 'custom:diagram')

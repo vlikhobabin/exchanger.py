@@ -72,7 +72,7 @@ python camunda_processes.py --stats
 python camunda_processes.py --external-tasks
 
 # Только определения процессов
-python camunda_processes.py --definitions
+python universal-worker.py/tools/camunda_processes.py --definitions
 
 # Только активные экземпляры
 python camunda_processes.py --instances
@@ -104,10 +104,10 @@ python camunda_processes.py --export camunda_data.json
 
 ```bash
 # Показать список процессов
-python process_manager.py list
+python universal-worker.py/tools/process_manager.py list
 
 # Подробная информация о процессе
-python process_manager.py info TestProcess
+python universal-worker.py/tools/process_manager.py info TestProcess
 
 # Запустить процесс с переменными
 python process_manager.py start TestProcess --variables '{"user": "John", "amount": 100}'
@@ -140,7 +140,7 @@ python process_manager.py delete TestProcess --force
 
 ```bash
 # Проверка всех очередей
-python check_queues.py
+python universal-worker.py/tools/check_queues.py
 ```
 
 ### queue_reader.py
@@ -159,22 +159,22 @@ python check_queues.py
 
 ```bash
 # Список всех очередей с количеством сообщений
-python queue_reader.py
+python universal-worker.py/tools/queue_reader.py
 
 # Просмотр первых 5 сообщений из очереди
-python queue_reader.py errors.camunda_tasks.queue
+python universal-worker.py/tools/queue_reader.py bitrix24.queue
 
 # Просмотр первых 10 сообщений
 python queue_reader.py errors.camunda_tasks.queue --count 10
 
 # Экспорт всех сообщений в JSON файл
-python queue_reader.py errors.camunda_tasks.queue --output errors_backup.json
+python universal-worker.py/tools/queue_reader.py bitrix24.queue --output bitrix24_queue.json
 
 # Очистка очереди (с подтверждением)
-python queue_reader.py errors.camunda_tasks.queue --clear
+python universal-worker.py/tools/queue_reader.py bitrix24.queue --clear
 
 # Принудительная очистка без подтверждения
-python queue_reader.py errors.camunda_tasks.queue --clear --force
+python universal-worker.py/tools/queue_reader.py bitrix24.queue --clear --force
 ```
 
 ### unlock_task.py

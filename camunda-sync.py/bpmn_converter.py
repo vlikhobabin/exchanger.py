@@ -1186,10 +1186,10 @@ class BPMNConverter:
             Dict с ключами 'id' и 'name' процесса, извлеченными из custom:diagram
         """
         try:
-            # Ищем extensionElements
-            extension_elements = root.find('.//bpmn:extensionElements', self.namespaces)
+            # Ищем extensionElements в процессе (а не в definitions)
+            extension_elements = root.find('.//bpmn:process/bpmn:extensionElements', self.namespaces)
             if extension_elements is None:
-                print("📋 extensionElements не найден, используем существующие данные процесса")
+                print("📋 extensionElements не найден в process, используем существующие данные процесса")
                 # Если нет extension, берем данные из самого процесса
                 process = root.find('.//bpmn:process', self.namespaces)
                 if process is not None:

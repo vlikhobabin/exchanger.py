@@ -1,0 +1,787 @@
+{
+  "export_info": {
+    "queue_name": "bitrix24.queue",
+    "timestamp": 1756215913166,
+    "timestamp_human": "2025-08-26 16:45:13",
+    "total_messages": 15,
+    "rabbitmq_host": "rmq.eg-holding.ru",
+    "rabbitmq_port": 5672
+  },
+  "messages": [
+    {
+      "message_number": 1,
+      "delivery_tag": 1,
+      "exchange": "camunda.external.tasks",
+      "routing_key": "bitrix24.bitrix_create_task",
+      "redelivered": false,
+      "properties": {
+        "content_type": "application/json",
+        "timestamp": 1756215585,
+        "timestamp_human": "2025-08-26 16:39:45",
+        "headers": {
+          "camunda_topic": "bitrix_create_task",
+          "process_instance_id": "48f19906-6131-11f0-98b3-00b436387543",
+          "target_system": "bitrix24",
+          "task_id": "48f9af65-6131-11f0-98b3-00b436387543"
+        }
+      },
+      "body": {
+        "task_id": "48f9af65-6131-11f0-98b3-00b436387543",
+        "topic": "bitrix_create_task",
+        "system": "bitrix24",
+        "variables": {
+          "projectManagerId": "3",
+          "demolition": "no",
+          "projectId": "2"
+        },
+        "process_instance_id": "48f19906-6131-11f0-98b3-00b436387543",
+        "activity_id": "Activity_0uu3h86",
+        "activity_instance_id": "Activity_0uu3h86:48f93a34-6131-11f0-98b3-00b436387543",
+        "worker_id": "universal-worker",
+        "retries": null,
+        "created_time": "2025-07-15T04:07:55.409+0000",
+        "priority": 0,
+        "tenant_id": null,
+        "business_key": null,
+        "timestamp": 1756215585386,
+        "metadata": {
+          "extensionProperties": {
+            "assigneeName": "Рук.отд.инж. изысканий",
+            "assigneeId": "15297982",
+            "UF_RESULT_EXPECTED": "true",
+            "UF_RESULT_QUESTION": "прошло 2 года с даты потучения ИГДИ?"
+          },
+          "activityInfo": {
+            "id": "Activity_0uu3h86",
+            "name": "Проведение инженерно-геодезических изысканий",
+            "type": "external",
+            "topic": "bitrix_create_task"
+          }
+        }
+      },
+      "body_raw": "{\"task_id\": \"48f9af65-6131-11f0-98b3-00b436387543\", \"topic\": \"bitrix_create_task\", \"system\": \"bitrix24\", \"variables\": {\"projectManagerId\": \"3\", \"demolition\": \"no\", \"projectId\": \"2\"}, \"process_instance_id\": \"48f19906-6131-11f0-98b3-00b436387543\", \"activity_id\": \"Activity_0uu3h86\", \"activity_instance_id\": \"Activity_0uu3h86:48f93a34-6131-11f0-98b3-00b436387543\", \"worker_id\": \"universal-worker\", \"retries\": null, \"created_time\": \"2025-07-15T04:07:55.409+0000\", \"priority\": 0, \"tenant_id\": null, \"business_key\": null, \"timestamp\": 1756215585386, \"metadata\": {\"extensionProperties\": {\"assigneeName\": \"Рук.отд.инж. изысканий\", \"assigneeId\": \"15297982\", \"UF_RESULT_EXPECTED\": \"true\", \"UF_RESULT_QUESTION\": \"прошло 2 года с даты потучения ИГДИ?\"}, \"activityInfo\": {\"id\": \"Activity_0uu3h86\", \"name\": \"Проведение инженерно-геодезических изысканий\", \"type\": \"external\", \"topic\": \"bitrix_create_task\"}}}",
+      "body_type": "json"
+    },
+    {
+      "message_number": 2,
+      "delivery_tag": 2,
+      "exchange": "camunda.external.tasks",
+      "routing_key": "bitrix24.bitrix_create_task",
+      "redelivered": false,
+      "properties": {
+        "content_type": "application/json",
+        "timestamp": 1756215586,
+        "timestamp_human": "2025-08-26 16:39:46",
+        "headers": {
+          "camunda_topic": "bitrix_create_task",
+          "process_instance_id": "48f19906-6131-11f0-98b3-00b436387543",
+          "target_system": "bitrix24",
+          "task_id": "48fa99c9-6131-11f0-98b3-00b436387543"
+        }
+      },
+      "body": {
+        "task_id": "48fa99c9-6131-11f0-98b3-00b436387543",
+        "topic": "bitrix_create_task",
+        "system": "bitrix24",
+        "variables": {
+          "projectManagerId": "3",
+          "demolition": "no",
+          "projectId": "2"
+        },
+        "process_instance_id": "48f19906-6131-11f0-98b3-00b436387543",
+        "activity_id": "Activity_14t7rmq",
+        "activity_instance_id": "Activity_14t7rmq:48fa72b8-6131-11f0-98b3-00b436387543",
+        "worker_id": "universal-worker",
+        "retries": null,
+        "created_time": "2025-07-15T04:07:55.416+0000",
+        "priority": 0,
+        "tenant_id": null,
+        "business_key": null,
+        "timestamp": 1756215586402,
+        "metadata": {
+          "extensionProperties": {
+            "assigneeName": "Рук.отд. арх.сопр. и анализа проектов",
+            "assigneeId": "15298311"
+          },
+          "activityInfo": {
+            "id": "Activity_14t7rmq",
+            "name": "Проведение продуктового анализа: конкурентный анализ",
+            "type": "external",
+            "topic": "bitrix_create_task"
+          }
+        }
+      },
+      "body_raw": "{\"task_id\": \"48fa99c9-6131-11f0-98b3-00b436387543\", \"topic\": \"bitrix_create_task\", \"system\": \"bitrix24\", \"variables\": {\"projectManagerId\": \"3\", \"demolition\": \"no\", \"projectId\": \"2\"}, \"process_instance_id\": \"48f19906-6131-11f0-98b3-00b436387543\", \"activity_id\": \"Activity_14t7rmq\", \"activity_instance_id\": \"Activity_14t7rmq:48fa72b8-6131-11f0-98b3-00b436387543\", \"worker_id\": \"universal-worker\", \"retries\": null, \"created_time\": \"2025-07-15T04:07:55.416+0000\", \"priority\": 0, \"tenant_id\": null, \"business_key\": null, \"timestamp\": 1756215586402, \"metadata\": {\"extensionProperties\": {\"assigneeName\": \"Рук.отд. арх.сопр. и анализа проектов\", \"assigneeId\": \"15298311\"}, \"activityInfo\": {\"id\": \"Activity_14t7rmq\", \"name\": \"Проведение продуктового анализа: конкурентный анализ\", \"type\": \"external\", \"topic\": \"bitrix_create_task\"}}}",
+      "body_type": "json"
+    },
+    {
+      "message_number": 3,
+      "delivery_tag": 3,
+      "exchange": "camunda.external.tasks",
+      "routing_key": "bitrix24.bitrix_create_task",
+      "redelivered": false,
+      "properties": {
+        "content_type": "application/json",
+        "timestamp": 1756215586,
+        "timestamp_human": "2025-08-26 16:39:46",
+        "headers": {
+          "camunda_topic": "bitrix_create_task",
+          "process_instance_id": "48f19906-6131-11f0-98b3-00b436387543",
+          "target_system": "bitrix24",
+          "task_id": "48fa99cd-6131-11f0-98b3-00b436387543"
+        }
+      },
+      "body": {
+        "task_id": "48fa99cd-6131-11f0-98b3-00b436387543",
+        "topic": "bitrix_create_task",
+        "system": "bitrix24",
+        "variables": {
+          "projectManagerId": "3",
+          "demolition": "no",
+          "projectId": "2"
+        },
+        "process_instance_id": "48f19906-6131-11f0-98b3-00b436387543",
+        "activity_id": "Activity_148jwpe",
+        "activity_instance_id": "Activity_148jwpe:48fa99cc-6131-11f0-98b3-00b436387543",
+        "worker_id": "universal-worker",
+        "retries": null,
+        "created_time": "2025-07-15T04:07:55.416+0000",
+        "priority": 0,
+        "tenant_id": null,
+        "business_key": null,
+        "timestamp": 1756215586402,
+        "metadata": {
+          "extensionProperties": {
+            "assigneeName": "Рук.отд. град.сопр. и анлиза проектов",
+            "assigneeId": "15298661",
+            "UF_RESULT_EXPECTED": "true",
+            "UF_RESULT_QUESTION": "град. мероприятия нужны?"
+          },
+          "activityInfo": {
+            "id": "Activity_148jwpe",
+            "name": "Проведение градостроительного анализа ГА1",
+            "type": "external",
+            "topic": "bitrix_create_task"
+          }
+        }
+      },
+      "body_raw": "{\"task_id\": \"48fa99cd-6131-11f0-98b3-00b436387543\", \"topic\": \"bitrix_create_task\", \"system\": \"bitrix24\", \"variables\": {\"projectManagerId\": \"3\", \"demolition\": \"no\", \"projectId\": \"2\"}, \"process_instance_id\": \"48f19906-6131-11f0-98b3-00b436387543\", \"activity_id\": \"Activity_148jwpe\", \"activity_instance_id\": \"Activity_148jwpe:48fa99cc-6131-11f0-98b3-00b436387543\", \"worker_id\": \"universal-worker\", \"retries\": null, \"created_time\": \"2025-07-15T04:07:55.416+0000\", \"priority\": 0, \"tenant_id\": null, \"business_key\": null, \"timestamp\": 1756215586402, \"metadata\": {\"extensionProperties\": {\"assigneeName\": \"Рук.отд. град.сопр. и анлиза проектов\", \"assigneeId\": \"15298661\", \"UF_RESULT_EXPECTED\": \"true\", \"UF_RESULT_QUESTION\": \"град. мероприятия нужны?\"}, \"activityInfo\": {\"id\": \"Activity_148jwpe\", \"name\": \"Проведение градостроительного анализа ГА1\", \"type\": \"external\", \"topic\": \"bitrix_create_task\"}}}",
+      "body_type": "json"
+    },
+    {
+      "message_number": 4,
+      "delivery_tag": 4,
+      "exchange": "camunda.external.tasks",
+      "routing_key": "bitrix24.bitrix_create_task",
+      "redelivered": false,
+      "properties": {
+        "content_type": "application/json",
+        "timestamp": 1756215586,
+        "timestamp_human": "2025-08-26 16:39:46",
+        "headers": {
+          "camunda_topic": "bitrix_create_task",
+          "process_instance_id": "48f19906-6131-11f0-98b3-00b436387543",
+          "target_system": "bitrix24",
+          "task_id": "48fac0e1-6131-11f0-98b3-00b436387543"
+        }
+      },
+      "body": {
+        "task_id": "48fac0e1-6131-11f0-98b3-00b436387543",
+        "topic": "bitrix_create_task",
+        "system": "bitrix24",
+        "variables": {
+          "projectManagerId": "3",
+          "demolition": "no",
+          "projectId": "2"
+        },
+        "process_instance_id": "48f19906-6131-11f0-98b3-00b436387543",
+        "activity_id": "Activity_4eqn1w3",
+        "activity_instance_id": "Activity_4eqn1w3:48fa99d0-6131-11f0-98b3-00b436387543",
+        "worker_id": "universal-worker",
+        "retries": null,
+        "created_time": "2025-07-15T04:07:55.417+0000",
+        "priority": 0,
+        "tenant_id": null,
+        "business_key": null,
+        "timestamp": 1756215586403,
+        "metadata": {
+          "extensionProperties": {
+            "UF_RESULT_EXPECTED": "true",
+            "UF_RESULT_QUESTION": "снос объектов по уведомлению  требуется?",
+            "assigneeName": "Рук. отдела разрешительной док-ции",
+            "assigneeId": "15297786"
+          },
+          "activityInfo": {
+            "id": "Activity_4eqn1w3",
+            "name": "Выяснить: снос объектов по уведомлению  требуется?",
+            "type": "external",
+            "topic": "bitrix_create_task"
+          }
+        }
+      },
+      "body_raw": "{\"task_id\": \"48fac0e1-6131-11f0-98b3-00b436387543\", \"topic\": \"bitrix_create_task\", \"system\": \"bitrix24\", \"variables\": {\"projectManagerId\": \"3\", \"demolition\": \"no\", \"projectId\": \"2\"}, \"process_instance_id\": \"48f19906-6131-11f0-98b3-00b436387543\", \"activity_id\": \"Activity_4eqn1w3\", \"activity_instance_id\": \"Activity_4eqn1w3:48fa99d0-6131-11f0-98b3-00b436387543\", \"worker_id\": \"universal-worker\", \"retries\": null, \"created_time\": \"2025-07-15T04:07:55.417+0000\", \"priority\": 0, \"tenant_id\": null, \"business_key\": null, \"timestamp\": 1756215586403, \"metadata\": {\"extensionProperties\": {\"UF_RESULT_EXPECTED\": \"true\", \"UF_RESULT_QUESTION\": \"снос объектов по уведомлению  требуется?\", \"assigneeName\": \"Рук. отдела разрешительной док-ции\", \"assigneeId\": \"15297786\"}, \"activityInfo\": {\"id\": \"Activity_4eqn1w3\", \"name\": \"Выяснить: снос объектов по уведомлению  требуется?\", \"type\": \"external\", \"topic\": \"bitrix_create_task\"}}}",
+      "body_type": "json"
+    },
+    {
+      "message_number": 5,
+      "delivery_tag": 5,
+      "exchange": "camunda.external.tasks",
+      "routing_key": "bitrix24.bitrix_create_task",
+      "redelivered": false,
+      "properties": {
+        "content_type": "application/json",
+        "timestamp": 1756215587,
+        "timestamp_human": "2025-08-26 16:39:47",
+        "headers": {
+          "camunda_topic": "bitrix_create_task",
+          "process_instance_id": "4dcf03ff-613c-11f0-98b3-00b436387543",
+          "target_system": "bitrix24",
+          "task_id": "4dd063a0-613c-11f0-98b3-00b436387543"
+        }
+      },
+      "body": {
+        "task_id": "4dd063a0-613c-11f0-98b3-00b436387543",
+        "topic": "bitrix_create_task",
+        "system": "bitrix24",
+        "variables": {
+          "initiator": null,
+          "projectManagerId": "3",
+          "demolition": "no",
+          "projectId": "2"
+        },
+        "process_instance_id": "4dcf03ff-613c-11f0-98b3-00b436387543",
+        "activity_id": "Activity_0uu3h86",
+        "activity_instance_id": "Activity_0uu3h86:4dd0639f-613c-11f0-98b3-00b436387543",
+        "worker_id": "universal-worker",
+        "retries": null,
+        "created_time": "2025-07-15T05:26:47.992+0000",
+        "priority": 0,
+        "tenant_id": null,
+        "business_key": null,
+        "timestamp": 1756215587414,
+        "metadata": {
+          "extensionProperties": {
+            "assigneeName": "Рук.отд.инж. изысканий",
+            "assigneeId": "15297982",
+            "UF_RESULT_EXPECTED": "true",
+            "UF_RESULT_QUESTION": "прошло 2 года с даты потучения ИГДИ?"
+          },
+          "activityInfo": {
+            "id": "Activity_0uu3h86",
+            "name": "Проведение инженерно-геодезических изысканий",
+            "type": "external",
+            "topic": "bitrix_create_task"
+          }
+        }
+      },
+      "body_raw": "{\"task_id\": \"4dd063a0-613c-11f0-98b3-00b436387543\", \"topic\": \"bitrix_create_task\", \"system\": \"bitrix24\", \"variables\": {\"initiator\": null, \"projectManagerId\": \"3\", \"demolition\": \"no\", \"projectId\": \"2\"}, \"process_instance_id\": \"4dcf03ff-613c-11f0-98b3-00b436387543\", \"activity_id\": \"Activity_0uu3h86\", \"activity_instance_id\": \"Activity_0uu3h86:4dd0639f-613c-11f0-98b3-00b436387543\", \"worker_id\": \"universal-worker\", \"retries\": null, \"created_time\": \"2025-07-15T05:26:47.992+0000\", \"priority\": 0, \"tenant_id\": null, \"business_key\": null, \"timestamp\": 1756215587414, \"metadata\": {\"extensionProperties\": {\"assigneeName\": \"Рук.отд.инж. изысканий\", \"assigneeId\": \"15297982\", \"UF_RESULT_EXPECTED\": \"true\", \"UF_RESULT_QUESTION\": \"прошло 2 года с даты потучения ИГДИ?\"}, \"activityInfo\": {\"id\": \"Activity_0uu3h86\", \"name\": \"Проведение инженерно-геодезических изысканий\", \"type\": \"external\", \"topic\": \"bitrix_create_task\"}}}",
+      "body_type": "json"
+    },
+    {
+      "message_number": 6,
+      "delivery_tag": 6,
+      "exchange": "camunda.external.tasks",
+      "routing_key": "bitrix24.bitrix_create_task",
+      "redelivered": false,
+      "properties": {
+        "content_type": "application/json",
+        "timestamp": 1756215587,
+        "timestamp_human": "2025-08-26 16:39:47",
+        "headers": {
+          "camunda_topic": "bitrix_create_task",
+          "process_instance_id": "4dcf03ff-613c-11f0-98b3-00b436387543",
+          "target_system": "bitrix24",
+          "task_id": "4dd0ffe4-613c-11f0-98b3-00b436387543"
+        }
+      },
+      "body": {
+        "task_id": "4dd0ffe4-613c-11f0-98b3-00b436387543",
+        "topic": "bitrix_create_task",
+        "system": "bitrix24",
+        "variables": {
+          "initiator": null,
+          "projectManagerId": "3",
+          "demolition": "no",
+          "projectId": "2"
+        },
+        "process_instance_id": "4dcf03ff-613c-11f0-98b3-00b436387543",
+        "activity_id": "Activity_14t7rmq",
+        "activity_instance_id": "Activity_14t7rmq:4dd08ab3-613c-11f0-98b3-00b436387543",
+        "worker_id": "universal-worker",
+        "retries": null,
+        "created_time": "2025-07-15T05:26:47.996+0000",
+        "priority": 0,
+        "tenant_id": null,
+        "business_key": null,
+        "timestamp": 1756215587415,
+        "metadata": {
+          "extensionProperties": {
+            "assigneeName": "Рук.отд. арх.сопр. и анализа проектов",
+            "assigneeId": "15298311"
+          },
+          "activityInfo": {
+            "id": "Activity_14t7rmq",
+            "name": "Проведение продуктового анализа: конкурентный анализ",
+            "type": "external",
+            "topic": "bitrix_create_task"
+          }
+        }
+      },
+      "body_raw": "{\"task_id\": \"4dd0ffe4-613c-11f0-98b3-00b436387543\", \"topic\": \"bitrix_create_task\", \"system\": \"bitrix24\", \"variables\": {\"initiator\": null, \"projectManagerId\": \"3\", \"demolition\": \"no\", \"projectId\": \"2\"}, \"process_instance_id\": \"4dcf03ff-613c-11f0-98b3-00b436387543\", \"activity_id\": \"Activity_14t7rmq\", \"activity_instance_id\": \"Activity_14t7rmq:4dd08ab3-613c-11f0-98b3-00b436387543\", \"worker_id\": \"universal-worker\", \"retries\": null, \"created_time\": \"2025-07-15T05:26:47.996+0000\", \"priority\": 0, \"tenant_id\": null, \"business_key\": null, \"timestamp\": 1756215587415, \"metadata\": {\"extensionProperties\": {\"assigneeName\": \"Рук.отд. арх.сопр. и анализа проектов\", \"assigneeId\": \"15298311\"}, \"activityInfo\": {\"id\": \"Activity_14t7rmq\", \"name\": \"Проведение продуктового анализа: конкурентный анализ\", \"type\": \"external\", \"topic\": \"bitrix_create_task\"}}}",
+      "body_type": "json"
+    },
+    {
+      "message_number": 7,
+      "delivery_tag": 7,
+      "exchange": "camunda.external.tasks",
+      "routing_key": "bitrix24.bitrix_create_task",
+      "redelivered": false,
+      "properties": {
+        "content_type": "application/json",
+        "timestamp": 1756215587,
+        "timestamp_human": "2025-08-26 16:39:47",
+        "headers": {
+          "camunda_topic": "bitrix_create_task",
+          "process_instance_id": "4dcf03ff-613c-11f0-98b3-00b436387543",
+          "target_system": "bitrix24",
+          "task_id": "4dd126f8-613c-11f0-98b3-00b436387543"
+        }
+      },
+      "body": {
+        "task_id": "4dd126f8-613c-11f0-98b3-00b436387543",
+        "topic": "bitrix_create_task",
+        "system": "bitrix24",
+        "variables": {
+          "initiator": null,
+          "projectManagerId": "3",
+          "demolition": "no",
+          "projectId": "2"
+        },
+        "process_instance_id": "4dcf03ff-613c-11f0-98b3-00b436387543",
+        "activity_id": "Activity_148jwpe",
+        "activity_instance_id": "Activity_148jwpe:4dd126f7-613c-11f0-98b3-00b436387543",
+        "worker_id": "universal-worker",
+        "retries": null,
+        "created_time": "2025-07-15T05:26:47.997+0000",
+        "priority": 0,
+        "tenant_id": null,
+        "business_key": null,
+        "timestamp": 1756215587415,
+        "metadata": {
+          "extensionProperties": {
+            "assigneeName": "Рук.отд. град.сопр. и анлиза проектов",
+            "assigneeId": "15298661",
+            "UF_RESULT_EXPECTED": "true",
+            "UF_RESULT_QUESTION": "град. мероприятия нужны?"
+          },
+          "activityInfo": {
+            "id": "Activity_148jwpe",
+            "name": "Проведение градостроительного анализа ГА1",
+            "type": "external",
+            "topic": "bitrix_create_task"
+          }
+        }
+      },
+      "body_raw": "{\"task_id\": \"4dd126f8-613c-11f0-98b3-00b436387543\", \"topic\": \"bitrix_create_task\", \"system\": \"bitrix24\", \"variables\": {\"initiator\": null, \"projectManagerId\": \"3\", \"demolition\": \"no\", \"projectId\": \"2\"}, \"process_instance_id\": \"4dcf03ff-613c-11f0-98b3-00b436387543\", \"activity_id\": \"Activity_148jwpe\", \"activity_instance_id\": \"Activity_148jwpe:4dd126f7-613c-11f0-98b3-00b436387543\", \"worker_id\": \"universal-worker\", \"retries\": null, \"created_time\": \"2025-07-15T05:26:47.997+0000\", \"priority\": 0, \"tenant_id\": null, \"business_key\": null, \"timestamp\": 1756215587415, \"metadata\": {\"extensionProperties\": {\"assigneeName\": \"Рук.отд. град.сопр. и анлиза проектов\", \"assigneeId\": \"15298661\", \"UF_RESULT_EXPECTED\": \"true\", \"UF_RESULT_QUESTION\": \"град. мероприятия нужны?\"}, \"activityInfo\": {\"id\": \"Activity_148jwpe\", \"name\": \"Проведение градостроительного анализа ГА1\", \"type\": \"external\", \"topic\": \"bitrix_create_task\"}}}",
+      "body_type": "json"
+    },
+    {
+      "message_number": 8,
+      "delivery_tag": 8,
+      "exchange": "camunda.external.tasks",
+      "routing_key": "bitrix24.bitrix_create_task",
+      "redelivered": false,
+      "properties": {
+        "content_type": "application/json",
+        "timestamp": 1756215587,
+        "timestamp_human": "2025-08-26 16:39:47",
+        "headers": {
+          "camunda_topic": "bitrix_create_task",
+          "process_instance_id": "4dcf03ff-613c-11f0-98b3-00b436387543",
+          "target_system": "bitrix24",
+          "task_id": "4dd14e0c-613c-11f0-98b3-00b436387543"
+        }
+      },
+      "body": {
+        "task_id": "4dd14e0c-613c-11f0-98b3-00b436387543",
+        "topic": "bitrix_create_task",
+        "system": "bitrix24",
+        "variables": {
+          "initiator": null,
+          "projectManagerId": "3",
+          "demolition": "no",
+          "projectId": "2"
+        },
+        "process_instance_id": "4dcf03ff-613c-11f0-98b3-00b436387543",
+        "activity_id": "Activity_4eqn1w3",
+        "activity_instance_id": "Activity_4eqn1w3:4dd14e0b-613c-11f0-98b3-00b436387543",
+        "worker_id": "universal-worker",
+        "retries": null,
+        "created_time": "2025-07-15T05:26:47.998+0000",
+        "priority": 0,
+        "tenant_id": null,
+        "business_key": null,
+        "timestamp": 1756215587415,
+        "metadata": {
+          "extensionProperties": {
+            "UF_RESULT_EXPECTED": "true",
+            "UF_RESULT_QUESTION": "снос объектов по уведомлению  требуется?",
+            "assigneeName": "Рук. отдела разрешительной док-ции",
+            "assigneeId": "15297786"
+          },
+          "activityInfo": {
+            "id": "Activity_4eqn1w3",
+            "name": "Выяснить: снос объектов по уведомлению  требуется?",
+            "type": "external",
+            "topic": "bitrix_create_task"
+          }
+        }
+      },
+      "body_raw": "{\"task_id\": \"4dd14e0c-613c-11f0-98b3-00b436387543\", \"topic\": \"bitrix_create_task\", \"system\": \"bitrix24\", \"variables\": {\"initiator\": null, \"projectManagerId\": \"3\", \"demolition\": \"no\", \"projectId\": \"2\"}, \"process_instance_id\": \"4dcf03ff-613c-11f0-98b3-00b436387543\", \"activity_id\": \"Activity_4eqn1w3\", \"activity_instance_id\": \"Activity_4eqn1w3:4dd14e0b-613c-11f0-98b3-00b436387543\", \"worker_id\": \"universal-worker\", \"retries\": null, \"created_time\": \"2025-07-15T05:26:47.998+0000\", \"priority\": 0, \"tenant_id\": null, \"business_key\": null, \"timestamp\": 1756215587415, \"metadata\": {\"extensionProperties\": {\"UF_RESULT_EXPECTED\": \"true\", \"UF_RESULT_QUESTION\": \"снос объектов по уведомлению  требуется?\", \"assigneeName\": \"Рук. отдела разрешительной док-ции\", \"assigneeId\": \"15297786\"}, \"activityInfo\": {\"id\": \"Activity_4eqn1w3\", \"name\": \"Выяснить: снос объектов по уведомлению  требуется?\", \"type\": \"external\", \"topic\": \"bitrix_create_task\"}}}",
+      "body_type": "json"
+    },
+    {
+      "message_number": 9,
+      "delivery_tag": 9,
+      "exchange": "camunda.external.tasks",
+      "routing_key": "bitrix24.bitrix_create_task",
+      "redelivered": false,
+      "properties": {
+        "content_type": "application/json",
+        "timestamp": 1756215708,
+        "timestamp_human": "2025-08-26 16:41:48",
+        "headers": {
+          "camunda_topic": "bitrix_create_task",
+          "process_instance_id": "58b56f2f-8282-11f0-a007-00b436387543",
+          "target_system": "bitrix24",
+          "task_id": "58b93fcd-8282-11f0-a007-00b436387543"
+        }
+      },
+      "body": {
+        "task_id": "58b93fcd-8282-11f0-a007-00b436387543",
+        "topic": "bitrix_create_task",
+        "system": "bitrix24",
+        "variables": {
+          "initiator": null
+        },
+        "process_instance_id": "58b56f2f-8282-11f0-a007-00b436387543",
+        "activity_id": "Activity_0xmi3rr",
+        "activity_instance_id": "Activity_0xmi3rr:58b93fcc-8282-11f0-a007-00b436387543",
+        "worker_id": "universal-worker",
+        "retries": null,
+        "created_time": "2025-08-26T13:41:19.438+0000",
+        "priority": 0,
+        "tenant_id": null,
+        "business_key": null,
+        "timestamp": 1756215708530,
+        "metadata": {
+          "extensionProperties": {
+            "checklists": "[{\"name\":\"Внесение данных счет 7101\",\"items\":[\"УУ\",\"БУ\"]},{\"name\":\"Внесение данных счет 7303\",\"items\":[\"УУ\",\"БУ\"]},{\"name\":\"Сверка УУ с БУ\",\"items\":[\"счет 7101\",\"счет 7303\"]},{\"name\":\"Проверка аналитик в УУ\",\"items\":[\"счет 7101\",\"счет 7102\",\"счет 7303\"]},{\"name\":\"Сверка с ЗРДС\",\"items\":[\"счет 7101\",\"счет 7303\"]}]"
+          },
+          "activityInfo": {
+            "id": "Activity_0xmi3rr",
+            "name": "Отражение авансовых отчетов в УУ",
+            "type": "external",
+            "topic": "bitrix_create_task"
+          }
+        }
+      },
+      "body_raw": "{\"task_id\": \"58b93fcd-8282-11f0-a007-00b436387543\", \"topic\": \"bitrix_create_task\", \"system\": \"bitrix24\", \"variables\": {\"initiator\": null}, \"process_instance_id\": \"58b56f2f-8282-11f0-a007-00b436387543\", \"activity_id\": \"Activity_0xmi3rr\", \"activity_instance_id\": \"Activity_0xmi3rr:58b93fcc-8282-11f0-a007-00b436387543\", \"worker_id\": \"universal-worker\", \"retries\": null, \"created_time\": \"2025-08-26T13:41:19.438+0000\", \"priority\": 0, \"tenant_id\": null, \"business_key\": null, \"timestamp\": 1756215708530, \"metadata\": {\"extensionProperties\": {\"checklists\": \"[{\\\"name\\\":\\\"Внесение данных счет 7101\\\",\\\"items\\\":[\\\"УУ\\\",\\\"БУ\\\"]},{\\\"name\\\":\\\"Внесение данных счет 7303\\\",\\\"items\\\":[\\\"УУ\\\",\\\"БУ\\\"]},{\\\"name\\\":\\\"Сверка УУ с БУ\\\",\\\"items\\\":[\\\"счет 7101\\\",\\\"счет 7303\\\"]},{\\\"name\\\":\\\"Проверка аналитик в УУ\\\",\\\"items\\\":[\\\"счет 7101\\\",\\\"счет 7102\\\",\\\"счет 7303\\\"]},{\\\"name\\\":\\\"Сверка с ЗРДС\\\",\\\"items\\\":[\\\"счет 7101\\\",\\\"счет 7303\\\"]}]\"}, \"activityInfo\": {\"id\": \"Activity_0xmi3rr\", \"name\": \"Отражение авансовых отчетов в УУ\", \"type\": \"external\", \"topic\": \"bitrix_create_task\"}}}",
+      "body_type": "json"
+    },
+    {
+      "message_number": 10,
+      "delivery_tag": 10,
+      "exchange": "camunda.external.tasks",
+      "routing_key": "bitrix24.bitrix_create_task",
+      "redelivered": false,
+      "properties": {
+        "content_type": "application/json",
+        "timestamp": 1756215708,
+        "timestamp_human": "2025-08-26 16:41:48",
+        "headers": {
+          "camunda_topic": "bitrix_create_task",
+          "process_instance_id": "58b56f2f-8282-11f0-a007-00b436387543",
+          "target_system": "bitrix24",
+          "task_id": "58b93fd1-8282-11f0-a007-00b436387543"
+        }
+      },
+      "body": {
+        "task_id": "58b93fd1-8282-11f0-a007-00b436387543",
+        "topic": "bitrix_create_task",
+        "system": "bitrix24",
+        "variables": {
+          "initiator": null
+        },
+        "process_instance_id": "58b56f2f-8282-11f0-a007-00b436387543",
+        "activity_id": "Activity_0yxi3uz",
+        "activity_instance_id": "Activity_0yxi3uz:58b93fd0-8282-11f0-a007-00b436387543",
+        "worker_id": "universal-worker",
+        "retries": null,
+        "created_time": "2025-08-26T13:41:19.438+0000",
+        "priority": 0,
+        "tenant_id": null,
+        "business_key": null,
+        "timestamp": 1756215708530,
+        "metadata": {
+          "extensionProperties": {
+            "checklists": "[{\"name\":\"Запрос данных\",\"items\":[\"брони\",\"ДДУ и ДКП\"]},{\"name\":\"Доначисление по УУ\",\"items\":[\"брони\"]},{\"name\":\"Сверка УУ с БУ счет 76333\",\"items\":[\"СЗ \\\"ИМЕНА. ЧЕХОВА 5\\\"\",\"ЭЛИТА-ЭКО\",\"ОГНИ\"]},{\"name\":\"Проверка аналитик в УУ счет 76333\",\"items\":[\"Организация УУ\",\"СЗ \\\"ИМЕНА. ЧЕХОВА 5\\\"\",\"ЭЛИТА-ЭКО\",\"ОГНИ\"]}]"
+          },
+          "activityInfo": {
+            "id": "Activity_0yxi3uz",
+            "name": "Проведение выручки по договорам бронирования в УУ",
+            "type": "external",
+            "topic": "bitrix_create_task"
+          }
+        }
+      },
+      "body_raw": "{\"task_id\": \"58b93fd1-8282-11f0-a007-00b436387543\", \"topic\": \"bitrix_create_task\", \"system\": \"bitrix24\", \"variables\": {\"initiator\": null}, \"process_instance_id\": \"58b56f2f-8282-11f0-a007-00b436387543\", \"activity_id\": \"Activity_0yxi3uz\", \"activity_instance_id\": \"Activity_0yxi3uz:58b93fd0-8282-11f0-a007-00b436387543\", \"worker_id\": \"universal-worker\", \"retries\": null, \"created_time\": \"2025-08-26T13:41:19.438+0000\", \"priority\": 0, \"tenant_id\": null, \"business_key\": null, \"timestamp\": 1756215708530, \"metadata\": {\"extensionProperties\": {\"checklists\": \"[{\\\"name\\\":\\\"Запрос данных\\\",\\\"items\\\":[\\\"брони\\\",\\\"ДДУ и ДКП\\\"]},{\\\"name\\\":\\\"Доначисление по УУ\\\",\\\"items\\\":[\\\"брони\\\"]},{\\\"name\\\":\\\"Сверка УУ с БУ счет 76333\\\",\\\"items\\\":[\\\"СЗ \\\\\\\"ИМЕНА. ЧЕХОВА 5\\\\\\\"\\\",\\\"ЭЛИТА-ЭКО\\\",\\\"ОГНИ\\\"]},{\\\"name\\\":\\\"Проверка аналитик в УУ счет 76333\\\",\\\"items\\\":[\\\"Организация УУ\\\",\\\"СЗ \\\\\\\"ИМЕНА. ЧЕХОВА 5\\\\\\\"\\\",\\\"ЭЛИТА-ЭКО\\\",\\\"ОГНИ\\\"]}]\"}, \"activityInfo\": {\"id\": \"Activity_0yxi3uz\", \"name\": \"Проведение выручки по договорам бронирования в УУ\", \"type\": \"external\", \"topic\": \"bitrix_create_task\"}}}",
+      "body_type": "json"
+    },
+    {
+      "message_number": 11,
+      "delivery_tag": 11,
+      "exchange": "camunda.external.tasks",
+      "routing_key": "bitrix24.bitrix_create_task",
+      "redelivered": false,
+      "properties": {
+        "content_type": "application/json",
+        "timestamp": 1756215708,
+        "timestamp_human": "2025-08-26 16:41:48",
+        "headers": {
+          "camunda_topic": "bitrix_create_task",
+          "process_instance_id": "58b56f2f-8282-11f0-a007-00b436387543",
+          "target_system": "bitrix24",
+          "task_id": "58b966e5-8282-11f0-a007-00b436387543"
+        }
+      },
+      "body": {
+        "task_id": "58b966e5-8282-11f0-a007-00b436387543",
+        "topic": "bitrix_create_task",
+        "system": "bitrix24",
+        "variables": {
+          "initiator": null
+        },
+        "process_instance_id": "58b56f2f-8282-11f0-a007-00b436387543",
+        "activity_id": "Activity_0pykqqg",
+        "activity_instance_id": "Activity_0pykqqg:58b93fd4-8282-11f0-a007-00b436387543",
+        "worker_id": "universal-worker",
+        "retries": null,
+        "created_time": "2025-08-26T13:41:19.439+0000",
+        "priority": 0,
+        "tenant_id": null,
+        "business_key": null,
+        "timestamp": 1756215708531,
+        "metadata": {
+          "extensionProperties": {
+            "checklists": "[{\"name\":\"Запрос данных\",\"items\":[\"Экспертиза (Кривошапова)\",\"КАСП (Демидова)\"]},{\"name\":\"Внесение данных в вои файлы\",\"items\":[\"файл \\\"Выработка\\\"\",\"данные по себестоимости\"]},{\"name\":\"Внесение данных в БИТ по внешним договорам\",\"items\":[\"КАСП\",\"НЭПД\"]},{\"name\":\"Внесение данных в БИТ по внутренним договорам\",\"items\":[\"Череповец\",\"Краснослободск\",\"В. Новгород\",\"Ленина\",\"Летная\",\"Столетова\",\"Казахская\",\"ОГНИ\"]},{\"name\":\"Сверка счетов\",\"items\":[\"счет 46\",\"счет 62\"]}]"
+          },
+          "activityInfo": {
+            "id": "Activity_0pykqqg",
+            "name": "Проведение выручки КАСП в УУ",
+            "type": "external",
+            "topic": "bitrix_create_task"
+          }
+        }
+      },
+      "body_raw": "{\"task_id\": \"58b966e5-8282-11f0-a007-00b436387543\", \"topic\": \"bitrix_create_task\", \"system\": \"bitrix24\", \"variables\": {\"initiator\": null}, \"process_instance_id\": \"58b56f2f-8282-11f0-a007-00b436387543\", \"activity_id\": \"Activity_0pykqqg\", \"activity_instance_id\": \"Activity_0pykqqg:58b93fd4-8282-11f0-a007-00b436387543\", \"worker_id\": \"universal-worker\", \"retries\": null, \"created_time\": \"2025-08-26T13:41:19.439+0000\", \"priority\": 0, \"tenant_id\": null, \"business_key\": null, \"timestamp\": 1756215708531, \"metadata\": {\"extensionProperties\": {\"checklists\": \"[{\\\"name\\\":\\\"Запрос данных\\\",\\\"items\\\":[\\\"Экспертиза (Кривошапова)\\\",\\\"КАСП (Демидова)\\\"]},{\\\"name\\\":\\\"Внесение данных в вои файлы\\\",\\\"items\\\":[\\\"файл \\\\\\\"Выработка\\\\\\\"\\\",\\\"данные по себестоимости\\\"]},{\\\"name\\\":\\\"Внесение данных в БИТ по внешним договорам\\\",\\\"items\\\":[\\\"КАСП\\\",\\\"НЭПД\\\"]},{\\\"name\\\":\\\"Внесение данных в БИТ по внутренним договорам\\\",\\\"items\\\":[\\\"Череповец\\\",\\\"Краснослободск\\\",\\\"В. Новгород\\\",\\\"Ленина\\\",\\\"Летная\\\",\\\"Столетова\\\",\\\"Казахская\\\",\\\"ОГНИ\\\"]},{\\\"name\\\":\\\"Сверка счетов\\\",\\\"items\\\":[\\\"счет 46\\\",\\\"счет 62\\\"]}]\"}, \"activityInfo\": {\"id\": \"Activity_0pykqqg\", \"name\": \"Проведение выручки КАСП в УУ\", \"type\": \"external\", \"topic\": \"bitrix_create_task\"}}}",
+      "body_type": "json"
+    },
+    {
+      "message_number": 12,
+      "delivery_tag": 12,
+      "exchange": "camunda.external.tasks",
+      "routing_key": "bitrix24.bitrix_create_task",
+      "redelivered": false,
+      "properties": {
+        "content_type": "application/json",
+        "timestamp": 1756215708,
+        "timestamp_human": "2025-08-26 16:41:48",
+        "headers": {
+          "camunda_topic": "bitrix_create_task",
+          "process_instance_id": "58b56f2f-8282-11f0-a007-00b436387543",
+          "target_system": "bitrix24",
+          "task_id": "58b966e9-8282-11f0-a007-00b436387543"
+        }
+      },
+      "body": {
+        "task_id": "58b966e9-8282-11f0-a007-00b436387543",
+        "topic": "bitrix_create_task",
+        "system": "bitrix24",
+        "variables": {
+          "initiator": null
+        },
+        "process_instance_id": "58b56f2f-8282-11f0-a007-00b436387543",
+        "activity_id": "Activity_1nptpu5",
+        "activity_instance_id": "Activity_1nptpu5:58b966e8-8282-11f0-a007-00b436387543",
+        "worker_id": "universal-worker",
+        "retries": null,
+        "created_time": "2025-08-26T13:41:19.439+0000",
+        "priority": 0,
+        "tenant_id": null,
+        "business_key": null,
+        "timestamp": 1756215708531,
+        "metadata": {
+          "extensionProperties": {
+            "checklists": "[{\"name\":\"Запрос данных\",\"items\":[\"брони\",\"ДДУ и ДКП\"]},{\"name\":\"Доначисление по УУ\",\"items\":[\"брони\"]},{\"name\":\"Сверка УУ с БУ счет 76333\",\"items\":[\"СЗ \\\"ИМЕНА. ЧЕХОВА 5\\\"\",\"ЭЛИТА-ЭКО\",\"ОГНИ\"]},{\"name\":\"Проверка аналитик в УУ счет 76333\",\"items\":[\"Организация УУ\",\"СЗ \\\"ИМЕНА. ЧЕХОВА 5\\\"\",\"ЭЛИТА-ЭКО\",\"ОГНИ\"]}]"
+          },
+          "activityInfo": {
+            "id": "Activity_1nptpu5",
+            "name": "Проведение выручки по договорам ДДУ и ДКП в УУ",
+            "type": "external",
+            "topic": "bitrix_create_task"
+          }
+        }
+      },
+      "body_raw": "{\"task_id\": \"58b966e9-8282-11f0-a007-00b436387543\", \"topic\": \"bitrix_create_task\", \"system\": \"bitrix24\", \"variables\": {\"initiator\": null}, \"process_instance_id\": \"58b56f2f-8282-11f0-a007-00b436387543\", \"activity_id\": \"Activity_1nptpu5\", \"activity_instance_id\": \"Activity_1nptpu5:58b966e8-8282-11f0-a007-00b436387543\", \"worker_id\": \"universal-worker\", \"retries\": null, \"created_time\": \"2025-08-26T13:41:19.439+0000\", \"priority\": 0, \"tenant_id\": null, \"business_key\": null, \"timestamp\": 1756215708531, \"metadata\": {\"extensionProperties\": {\"checklists\": \"[{\\\"name\\\":\\\"Запрос данных\\\",\\\"items\\\":[\\\"брони\\\",\\\"ДДУ и ДКП\\\"]},{\\\"name\\\":\\\"Доначисление по УУ\\\",\\\"items\\\":[\\\"брони\\\"]},{\\\"name\\\":\\\"Сверка УУ с БУ счет 76333\\\",\\\"items\\\":[\\\"СЗ \\\\\\\"ИМЕНА. ЧЕХОВА 5\\\\\\\"\\\",\\\"ЭЛИТА-ЭКО\\\",\\\"ОГНИ\\\"]},{\\\"name\\\":\\\"Проверка аналитик в УУ счет 76333\\\",\\\"items\\\":[\\\"Организация УУ\\\",\\\"СЗ \\\\\\\"ИМЕНА. ЧЕХОВА 5\\\\\\\"\\\",\\\"ЭЛИТА-ЭКО\\\",\\\"ОГНИ\\\"]}]\"}, \"activityInfo\": {\"id\": \"Activity_1nptpu5\", \"name\": \"Проведение выручки по договорам ДДУ и ДКП в УУ\", \"type\": \"external\", \"topic\": \"bitrix_create_task\"}}}",
+      "body_type": "json"
+    },
+    {
+      "message_number": 13,
+      "delivery_tag": 13,
+      "exchange": "camunda.external.tasks",
+      "routing_key": "bitrix24.bitrix_create_task",
+      "redelivered": false,
+      "properties": {
+        "content_type": "application/json",
+        "timestamp": 1756215708,
+        "timestamp_human": "2025-08-26 16:41:48",
+        "headers": {
+          "camunda_topic": "bitrix_create_task",
+          "process_instance_id": "58b56f2f-8282-11f0-a007-00b436387543",
+          "target_system": "bitrix24",
+          "task_id": "58b966ed-8282-11f0-a007-00b436387543"
+        }
+      },
+      "body": {
+        "task_id": "58b966ed-8282-11f0-a007-00b436387543",
+        "topic": "bitrix_create_task",
+        "system": "bitrix24",
+        "variables": {
+          "initiator": null
+        },
+        "process_instance_id": "58b56f2f-8282-11f0-a007-00b436387543",
+        "activity_id": "Activity_15spj7b",
+        "activity_instance_id": "Activity_15spj7b:58b966ec-8282-11f0-a007-00b436387543",
+        "worker_id": "universal-worker",
+        "retries": null,
+        "created_time": "2025-08-26T13:41:19.439+0000",
+        "priority": 0,
+        "tenant_id": null,
+        "business_key": null,
+        "timestamp": 1756215708532,
+        "metadata": {
+          "extensionProperties": {
+            "checklists": "[{\"name\":\"Сбор данных счет 6602\",\"items\":[\"СЗ \\\"ОГНИ\\\"\",\"ЭКОГАРАНТ-ИНЖИНИРИНГ\",\"СЗ \\\"ИМЕНА. КРТ. ВОЛГОГРАД\\\"\",\"СЗ КОМПЛЕКС. ВОЛГОГРАД\",\"СЗ \\\"ИМЕНА. ЧЕХОВА 5\\\"\",\"СЗ КОМПЛЕКС. КРАСНОСЛОБОДСК\",\"СЗ ЭЛИТА-ЭКО\",\"СЗ ИМЕНА. КРТ. ТУЛА\",\"СЗ ИМЕНА. КЛЮЧЕВОЙ\",\"СЗ КОМПЛЕКС\"]},{\"name\":\"Начисление в БИТ счет 6602\",\"items\":[\"СЗ ИМЕНА. КЛЮЧЕВОЙ\",\"СЗ \\\"ИМЕНА. КРТ. ВОЛГОГРАД\\\"\",\"ЭКОГАРАНТ-ИНЖИНИРИНГ\",\"СЗ ИМЕНА. КРТ. ТУЛА\",\"СЗ \\\"ОГНИ\\\"\",\"СЗ КОМПЛЕКС. КРАСНОСЛОБОДСК\",\"СЗ ЭЛИТА-ЭКО\",\"СЗ КОМПЛЕКС\",\"СЗ \\\"ИМЕНА. ЧЕХОВА 5\\\"\",\"СЗ КОМПЛЕКС. ВОЛГОГРАД\"]},{\"name\":\"Сверка УУ с БУ счет 6601\",\"items\":[\"СЗ КОМПЛЕКС. ВОЛГОГРАД\",\"СЗ \\\"ИМЕНА. КРТ. ВОЛГОГРАД\\\"\",\"СЗ КОМПЛЕКС\",\"СЗ ИМЕНА. КЛЮЧЕВОЙ\",\"СЗ ЭЛИТА-ЭКО\",\"СЗ \\\"ИМЕНА. ЧЕХОВА 5\\\"\",\"СЗ ИМЕНА. КРТ. ТУЛА\",\"СЗ КОМПЛЕКС. КРАСНОСЛОБОДСК\",\"СЗ \\\"ОГНИ\\\"\",\"ЭКОГАРАНТ-ИНЖИНИРИНГ\"]},{\"name\":\"Сверка УУ с БУ счет 6602\",\"items\":[\"СЗ КОМПЛЕКС. КРАСНОСЛОБОДСК\",\"СЗ КОМПЛЕКС. ВОЛГОГРАД\",\"СЗ КОМПЛЕКС\",\"СЗ ИМЕНА. КРТ. ТУЛА\",\"СЗ \\\"ИМЕНА. КРТ. ВОЛГОГРАД\\\"\",\"СЗ \\\"ИМЕНА. ЧЕХОВА 5\\\"\",\"СЗ \\\"ОГНИ\\\"\",\"СЗ ЭЛИТА-ЭКО\",\"СЗ ИМЕНА. КЛЮЧЕВОЙ\",\"ЭКОГАРАНТ-ИНЖИНИРИНГ\"]},{\"name\":\"Проверка аналитик в УУ счет 6601\",\"items\":[\"СЗ КОМПЛЕКС. ВОЛГОГРАД\",\"СЗ \\\"ИМЕНА. КРТ. ВОЛГОГРАД\\\"\",\"СЗ КОМПЛЕКС\",\"СЗ ИМЕНА. КЛЮЧЕВОЙ\",\"СЗ ЭЛИТА-ЭКО\",\"СЗ \\\"ИМЕНА. ЧЕХОВА 5\\\"\",\"СЗ ИМЕНА. КРТ. ТУЛА\",\"СЗ КОМПЛЕКС. КРАСНОСЛОБОДСК\",\"СЗ \\\"ОГНИ\\\"\",\"ЭКОГАРАНТ-ИНЖИНИРИНГ\"]},{\"name\":\"Проверка аналитик в УУ счет 6602\",\"items\":[\"СЗ КОМПЛЕКС. КРАСНОСЛОБОДСК\",\"СЗ КОМПЛЕКС. ВОЛГОГРАД\",\"СЗ КОМПЛЕКС\",\"СЗ ИМЕНА. КРТ. ТУЛА\",\"СЗ \\\"ИМЕНА. КРТ. ВОЛГОГРАД\\\"\",\"СЗ \\\"ИМЕНА. ЧЕХОВА 5\\\"\",\"СЗ \\\"ОГНИ\\\"\",\"СЗ ЭЛИТА-ЭКО\",\"СЗ ИМЕНА. КЛЮЧЕВОЙ\",\"ЭКОГАРАНТ-ИНЖИНИРИНГ\"]}]"
+          },
+          "activityInfo": {
+            "id": "Activity_15spj7b",
+            "name": "Начисление процентов банка в УУ",
+            "type": "external",
+            "topic": "bitrix_create_task"
+          }
+        }
+      },
+      "body_raw": "{\"task_id\": \"58b966ed-8282-11f0-a007-00b436387543\", \"topic\": \"bitrix_create_task\", \"system\": \"bitrix24\", \"variables\": {\"initiator\": null}, \"process_instance_id\": \"58b56f2f-8282-11f0-a007-00b436387543\", \"activity_id\": \"Activity_15spj7b\", \"activity_instance_id\": \"Activity_15spj7b:58b966ec-8282-11f0-a007-00b436387543\", \"worker_id\": \"universal-worker\", \"retries\": null, \"created_time\": \"2025-08-26T13:41:19.439+0000\", \"priority\": 0, \"tenant_id\": null, \"business_key\": null, \"timestamp\": 1756215708532, \"metadata\": {\"extensionProperties\": {\"checklists\": \"[{\\\"name\\\":\\\"Сбор данных счет 6602\\\",\\\"items\\\":[\\\"СЗ \\\\\\\"ОГНИ\\\\\\\"\\\",\\\"ЭКОГАРАНТ-ИНЖИНИРИНГ\\\",\\\"СЗ \\\\\\\"ИМЕНА. КРТ. ВОЛГОГРАД\\\\\\\"\\\",\\\"СЗ КОМПЛЕКС. ВОЛГОГРАД\\\",\\\"СЗ \\\\\\\"ИМЕНА. ЧЕХОВА 5\\\\\\\"\\\",\\\"СЗ КОМПЛЕКС. КРАСНОСЛОБОДСК\\\",\\\"СЗ ЭЛИТА-ЭКО\\\",\\\"СЗ ИМЕНА. КРТ. ТУЛА\\\",\\\"СЗ ИМЕНА. КЛЮЧЕВОЙ\\\",\\\"СЗ КОМПЛЕКС\\\"]},{\\\"name\\\":\\\"Начисление в БИТ счет 6602\\\",\\\"items\\\":[\\\"СЗ ИМЕНА. КЛЮЧЕВОЙ\\\",\\\"СЗ \\\\\\\"ИМЕНА. КРТ. ВОЛГОГРАД\\\\\\\"\\\",\\\"ЭКОГАРАНТ-ИНЖИНИРИНГ\\\",\\\"СЗ ИМЕНА. КРТ. ТУЛА\\\",\\\"СЗ \\\\\\\"ОГНИ\\\\\\\"\\\",\\\"СЗ КОМПЛЕКС. КРАСНОСЛОБОДСК\\\",\\\"СЗ ЭЛИТА-ЭКО\\\",\\\"СЗ КОМПЛЕКС\\\",\\\"СЗ \\\\\\\"ИМЕНА. ЧЕХОВА 5\\\\\\\"\\\",\\\"СЗ КОМПЛЕКС. ВОЛГОГРАД\\\"]},{\\\"name\\\":\\\"Сверка УУ с БУ счет 6601\\\",\\\"items\\\":[\\\"СЗ КОМПЛЕКС. ВОЛГОГРАД\\\",\\\"СЗ \\\\\\\"ИМЕНА. КРТ. ВОЛГОГРАД\\\\\\\"\\\",\\\"СЗ КОМПЛЕКС\\\",\\\"СЗ ИМЕНА. КЛЮЧЕВОЙ\\\",\\\"СЗ ЭЛИТА-ЭКО\\\",\\\"СЗ \\\\\\\"ИМЕНА. ЧЕХОВА 5\\\\\\\"\\\",\\\"СЗ ИМЕНА. КРТ. ТУЛА\\\",\\\"СЗ КОМПЛЕКС. КРАСНОСЛОБОДСК\\\",\\\"СЗ \\\\\\\"ОГНИ\\\\\\\"\\\",\\\"ЭКОГАРАНТ-ИНЖИНИРИНГ\\\"]},{\\\"name\\\":\\\"Сверка УУ с БУ счет 6602\\\",\\\"items\\\":[\\\"СЗ КОМПЛЕКС. КРАСНОСЛОБОДСК\\\",\\\"СЗ КОМПЛЕКС. ВОЛГОГРАД\\\",\\\"СЗ КОМПЛЕКС\\\",\\\"СЗ ИМЕНА. КРТ. ТУЛА\\\",\\\"СЗ \\\\\\\"ИМЕНА. КРТ. ВОЛГОГРАД\\\\\\\"\\\",\\\"СЗ \\\\\\\"ИМЕНА. ЧЕХОВА 5\\\\\\\"\\\",\\\"СЗ \\\\\\\"ОГНИ\\\\\\\"\\\",\\\"СЗ ЭЛИТА-ЭКО\\\",\\\"СЗ ИМЕНА. КЛЮЧЕВОЙ\\\",\\\"ЭКОГАРАНТ-ИНЖИНИРИНГ\\\"]},{\\\"name\\\":\\\"Проверка аналитик в УУ счет 6601\\\",\\\"items\\\":[\\\"СЗ КОМПЛЕКС. ВОЛГОГРАД\\\",\\\"СЗ \\\\\\\"ИМЕНА. КРТ. ВОЛГОГРАД\\\\\\\"\\\",\\\"СЗ КОМПЛЕКС\\\",\\\"СЗ ИМЕНА. КЛЮЧЕВОЙ\\\",\\\"СЗ ЭЛИТА-ЭКО\\\",\\\"СЗ \\\\\\\"ИМЕНА. ЧЕХОВА 5\\\\\\\"\\\",\\\"СЗ ИМЕНА. КРТ. ТУЛА\\\",\\\"СЗ КОМПЛЕКС. КРАСНОСЛОБОДСК\\\",\\\"СЗ \\\\\\\"ОГНИ\\\\\\\"\\\",\\\"ЭКОГАРАНТ-ИНЖИНИРИНГ\\\"]},{\\\"name\\\":\\\"Проверка аналитик в УУ счет 6602\\\",\\\"items\\\":[\\\"СЗ КОМПЛЕКС. КРАСНОСЛОБОДСК\\\",\\\"СЗ КОМПЛЕКС. ВОЛГОГРАД\\\",\\\"СЗ КОМПЛЕКС\\\",\\\"СЗ ИМЕНА. КРТ. ТУЛА\\\",\\\"СЗ \\\\\\\"ИМЕНА. КРТ. ВОЛГОГРАД\\\\\\\"\\\",\\\"СЗ \\\\\\\"ИМЕНА. ЧЕХОВА 5\\\\\\\"\\\",\\\"СЗ \\\\\\\"ОГНИ\\\\\\\"\\\",\\\"СЗ ЭЛИТА-ЭКО\\\",\\\"СЗ ИМЕНА. КЛЮЧЕВОЙ\\\",\\\"ЭКОГАРАНТ-ИНЖИНИРИНГ\\\"]}]\"}, \"activityInfo\": {\"id\": \"Activity_15spj7b\", \"name\": \"Начисление процентов банка в УУ\", \"type\": \"external\", \"topic\": \"bitrix_create_task\"}}}",
+      "body_type": "json"
+    },
+    {
+      "message_number": 14,
+      "delivery_tag": 14,
+      "exchange": "camunda.external.tasks",
+      "routing_key": "bitrix24.bitrix_create_task",
+      "redelivered": false,
+      "properties": {
+        "content_type": "application/json",
+        "timestamp": 1756215708,
+        "timestamp_human": "2025-08-26 16:41:48",
+        "headers": {
+          "camunda_topic": "bitrix_create_task",
+          "process_instance_id": "58b56f2f-8282-11f0-a007-00b436387543",
+          "target_system": "bitrix24",
+          "task_id": "58b9b511-8282-11f0-a007-00b436387543"
+        }
+      },
+      "body": {
+        "task_id": "58b9b511-8282-11f0-a007-00b436387543",
+        "topic": "bitrix_create_task",
+        "system": "bitrix24",
+        "variables": {
+          "initiator": null
+        },
+        "process_instance_id": "58b56f2f-8282-11f0-a007-00b436387543",
+        "activity_id": "Activity_0aci2ni",
+        "activity_instance_id": "Activity_0aci2ni:58b9b510-8282-11f0-a007-00b436387543",
+        "worker_id": "universal-worker",
+        "retries": null,
+        "created_time": "2025-08-26T13:41:19.441+0000",
+        "priority": 0,
+        "tenant_id": null,
+        "business_key": null,
+        "timestamp": 1756215708533,
+        "metadata": {
+          "extensionProperties": {
+            "checklists": "[{\"name\":\"Начисление в УУ счет 6604\",\"items\":[\"Канке (АГ(нал))\",\"Канке (ЭИ)\",\"Маликов (ИС)\",\"Канке (ИУП)\",\"Кирсанов (ИУП)\",\"Маликов (ЭИ)\",\"Торнадо (ИФ)\"]},{\"name\":\"Сверка УУ с БУ счет 6603\",\"items\":[\"ИУП\",\"ЭКОГАРАНТ-ИНЖИНИРИНГ\",\"ИС\",\"ИФ\"]},{\"name\":\"Сверка УУ с БУ счет 6604\",\"items\":[\"ЭКОГАРАНТ-ИНЖИНИРИНГ\",\"ИУП\",\"ИС\",\"ИФ\"]},{\"name\":\"Проверка аналитик в УУ счёт 6603\",\"items\":[\"ИУП\",\"ЭКОГАРАНТ-ИНЖИНИРИНГ\",\"ИС\",\"ИФ\"]},{\"name\":\"Проверка аналитик в УУ счет 6604\",\"items\":[\"ИУП\",\"ЭКОГАРАНТ-ИНЖИНИРИНГ\",\"ИС\",\"ИФ\"]}]"
+          },
+          "activityInfo": {
+            "id": "Activity_0aci2ni",
+            "name": "Начисление процентов по займам в УУ",
+            "type": "external",
+            "topic": "bitrix_create_task"
+          }
+        }
+      },
+      "body_raw": "{\"task_id\": \"58b9b511-8282-11f0-a007-00b436387543\", \"topic\": \"bitrix_create_task\", \"system\": \"bitrix24\", \"variables\": {\"initiator\": null}, \"process_instance_id\": \"58b56f2f-8282-11f0-a007-00b436387543\", \"activity_id\": \"Activity_0aci2ni\", \"activity_instance_id\": \"Activity_0aci2ni:58b9b510-8282-11f0-a007-00b436387543\", \"worker_id\": \"universal-worker\", \"retries\": null, \"created_time\": \"2025-08-26T13:41:19.441+0000\", \"priority\": 0, \"tenant_id\": null, \"business_key\": null, \"timestamp\": 1756215708533, \"metadata\": {\"extensionProperties\": {\"checklists\": \"[{\\\"name\\\":\\\"Начисление в УУ счет 6604\\\",\\\"items\\\":[\\\"Канке (АГ(нал))\\\",\\\"Канке (ЭИ)\\\",\\\"Маликов (ИС)\\\",\\\"Канке (ИУП)\\\",\\\"Кирсанов (ИУП)\\\",\\\"Маликов (ЭИ)\\\",\\\"Торнадо (ИФ)\\\"]},{\\\"name\\\":\\\"Сверка УУ с БУ счет 6603\\\",\\\"items\\\":[\\\"ИУП\\\",\\\"ЭКОГАРАНТ-ИНЖИНИРИНГ\\\",\\\"ИС\\\",\\\"ИФ\\\"]},{\\\"name\\\":\\\"Сверка УУ с БУ счет 6604\\\",\\\"items\\\":[\\\"ЭКОГАРАНТ-ИНЖИНИРИНГ\\\",\\\"ИУП\\\",\\\"ИС\\\",\\\"ИФ\\\"]},{\\\"name\\\":\\\"Проверка аналитик в УУ счёт 6603\\\",\\\"items\\\":[\\\"ИУП\\\",\\\"ЭКОГАРАНТ-ИНЖИНИРИНГ\\\",\\\"ИС\\\",\\\"ИФ\\\"]},{\\\"name\\\":\\\"Проверка аналитик в УУ счет 6604\\\",\\\"items\\\":[\\\"ИУП\\\",\\\"ЭКОГАРАНТ-ИНЖИНИРИНГ\\\",\\\"ИС\\\",\\\"ИФ\\\"]}]\"}, \"activityInfo\": {\"id\": \"Activity_0aci2ni\", \"name\": \"Начисление процентов по займам в УУ\", \"type\": \"external\", \"topic\": \"bitrix_create_task\"}}}",
+      "body_type": "json"
+    },
+    {
+      "message_number": 15,
+      "delivery_tag": 15,
+      "exchange": "camunda.external.tasks",
+      "routing_key": "bitrix24.bitrix_create_task",
+      "redelivered": false,
+      "properties": {
+        "content_type": "application/json",
+        "timestamp": 1756215708,
+        "timestamp_human": "2025-08-26 16:41:48",
+        "headers": {
+          "camunda_topic": "bitrix_create_task",
+          "process_instance_id": "58b56f2f-8282-11f0-a007-00b436387543",
+          "target_system": "bitrix24",
+          "task_id": "58b9b515-8282-11f0-a007-00b436387543"
+        }
+      },
+      "body": {
+        "task_id": "58b9b515-8282-11f0-a007-00b436387543",
+        "topic": "bitrix_create_task",
+        "system": "bitrix24",
+        "variables": {
+          "initiator": null
+        },
+        "process_instance_id": "58b56f2f-8282-11f0-a007-00b436387543",
+        "activity_id": "Activity_07j9woc",
+        "activity_instance_id": "Activity_07j9woc:58b9b514-8282-11f0-a007-00b436387543",
+        "worker_id": "universal-worker",
+        "retries": null,
+        "created_time": "2025-08-26T13:41:19.441+0000",
+        "priority": 0,
+        "tenant_id": null,
+        "business_key": null,
+        "timestamp": 1756215708533,
+        "metadata": {
+          "extensionProperties": {
+            "checklists": "[{\"name\":\"ЗП и налоги ФОТ в УУ\",\"items\":[\"Управленческая аналитика, доначисление по УУ\",\"Распределение ЗП в Бит\",\"Сверка со сводом\",\"Финальная проверка ЗП\",\"Распределение налогов\",\"Сверка с БУ\",\"Доначисление\"]}]"
+          },
+          "activityInfo": {
+            "id": "Activity_07j9woc",
+            "name": "Отражение начисления заработной платы в УУ",
+            "type": "external",
+            "topic": "bitrix_create_task"
+          }
+        }
+      },
+      "body_raw": "{\"task_id\": \"58b9b515-8282-11f0-a007-00b436387543\", \"topic\": \"bitrix_create_task\", \"system\": \"bitrix24\", \"variables\": {\"initiator\": null}, \"process_instance_id\": \"58b56f2f-8282-11f0-a007-00b436387543\", \"activity_id\": \"Activity_07j9woc\", \"activity_instance_id\": \"Activity_07j9woc:58b9b514-8282-11f0-a007-00b436387543\", \"worker_id\": \"universal-worker\", \"retries\": null, \"created_time\": \"2025-08-26T13:41:19.441+0000\", \"priority\": 0, \"tenant_id\": null, \"business_key\": null, \"timestamp\": 1756215708533, \"metadata\": {\"extensionProperties\": {\"checklists\": \"[{\\\"name\\\":\\\"ЗП и налоги ФОТ в УУ\\\",\\\"items\\\":[\\\"Управленческая аналитика, доначисление по УУ\\\",\\\"Распределение ЗП в Бит\\\",\\\"Сверка со сводом\\\",\\\"Финальная проверка ЗП\\\",\\\"Распределение налогов\\\",\\\"Сверка с БУ\\\",\\\"Доначисление\\\"]}]\"}, \"activityInfo\": {\"id\": \"Activity_07j9woc\", \"name\": \"Отражение начисления заработной платы в УУ\", \"type\": \"external\", \"topic\": \"bitrix_create_task\"}}}",
+      "body_type": "json"
+    }
+  ]
+}
