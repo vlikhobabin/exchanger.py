@@ -144,18 +144,8 @@ python tools/test_single_response.py
 
 ### Как сервис
 
-```bash
-# Создание systemd сервиса
-sudo cp camunda-worker.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable camunda-worker
-sudo systemctl start camunda-worker
-
-# Управление сервисом
-systemctl status camunda-worker
-systemctl restart camunda-worker
-journalctl -u camunda-worker -f
-```
+См. подробную инструкцию по установке и управлению сервисами в `scripts/SERVICES_MANAGEMENT.md`.
+В проекте используются systemd сервисы: `exchanger-worker.service` и `exchanger-creator.service`.
 
 ## Конфигурация
 
@@ -196,7 +186,7 @@ Worker автоматически определяет целевую систе
 
 - **Основные логи**: `logs/camunda_worker.log`
 - **Логи ошибок**: `logs/camunda_worker_errors.log`
-- **Системные логи**: через `journalctl -u camunda-worker`
+- **Системные логи**: через `journalctl -u exchanger-worker`
 
 ### Статистика
 

@@ -141,14 +141,12 @@ python tools/camunda_processes.py --stats
 
 ### Production
 
-```bash
-# Установка как системный сервис
-cd universal-worker.py
-sudo bash install.sh
+Подробная установка и управление systemd сервисами описаны здесь:
+📖 `scripts/SERVICES_MANAGEMENT.md`
 
-# Настройка systemd сервисов для всех компонентов
-# (планируется создать общий скрипт установки)
-```
+Сервисы:
+- `exchanger-worker.service` — Universal Worker
+- `exchanger-creator.service` — Task Creator
 
 ## Документация компонентов
 
