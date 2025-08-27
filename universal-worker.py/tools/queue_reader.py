@@ -2,6 +2,38 @@
 """
 Утилита для работы с сообщениями в очередях RabbitMQ
 Позволяет просматривать, экспортировать и очищать очереди
+
+КОМАНДЫ ДЛЯ РАБОТЫ:
+
+# Список всех очередей с количеством сообщений
+python queue_reader.py
+
+# Просмотр первых 5 сообщений из очереди (по умолчанию)
+python queue_reader.py bitrix24.queue
+
+# Просмотр первых 10 сообщений из очереди
+python queue_reader.py bitrix24.queue --count 10
+
+# Просмотр сообщений из очереди ошибок
+python queue_reader.py errors.camunda_tasks.queue --count 3
+
+# Экспорт всех сообщений очереди в JSON файл
+python queue_reader.py bitrix24.queue --output bitrix24_backup.json
+
+# Экспорт сообщений из очереди ошибок
+python queue_reader.py errors.camunda_tasks.queue --output errors_backup.json
+
+# Очистка очереди с подтверждением
+python queue_reader.py bitrix24.queue --clear
+
+# Принудительная очистка очереди без подтверждения
+python queue_reader.py bitrix24.queue --clear --force
+
+# Очистка очереди ошибок
+python queue_reader.py errors.camunda_tasks.queue --clear --force
+
+# Показать справку
+python queue_reader.py --help
 """
 import argparse
 import json

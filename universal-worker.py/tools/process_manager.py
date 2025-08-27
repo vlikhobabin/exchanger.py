@@ -2,6 +2,40 @@
 """
 Многофункциональный скрипт управления процессами Camunda
 Позволяет просматривать, запускать, останавливать и удалять процессы
+
+КОМАНДЫ ДЛЯ РАБОТЫ:
+
+# Показать список всех процессов
+python process_manager.py list
+
+# Показать больше процессов
+python process_manager.py list --limit 20
+
+# Подробная информация о процессе
+python process_manager.py info TestProcess
+
+# Запустить процесс с переменными (JSON формат)
+python process_manager.py start TestProcess --variables '{"user": "John", "amount": 100}'
+
+# Запустить процесс с переменными (key=value формат)
+python process_manager.py start TestProcess --variables "user=John,amount=100" --business-key "ORDER-123"
+
+# Запустить конкретную версию процесса
+python process_manager.py start TestProcess --version 2 --variables "test=true"
+
+# Остановить все экземпляры процесса
+python process_manager.py stop TestProcess
+
+# Удалить процесс полностью
+python process_manager.py delete TestProcess
+
+# Принудительные операции без подтверждения
+python universal-worker.py/tools/process_manager.py stop Process_3f946f12_5071_4a9f_9960_0f57b4c05e45 --force
+python process_manager.py delete TestProcess --force
+
+# Показать справку по командам
+python process_manager.py --help
+python process_manager.py start --help
 """
 
 import argparse

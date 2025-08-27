@@ -2,6 +2,37 @@
 
 Каталог содержит вспомогательные скрипты для управления, мониторинга и диагностики системы Universal Camunda Worker.
 
+## 🚀 Быстрый старт - Process Manager
+
+**process_manager.py** - основной инструмент для управления процессами Camunda. Рекомендуется для ежедневного использования.
+
+```bash
+# Показать список всех процессов
+python universal-worker.py/tools/process_manager.py list
+
+# Показать больше процессов
+python universal-worker.py/tools/process_manager.py list --limit 20
+
+# Подробная информация о процессе
+python universal-worker.py/tools/process_manager.py info TestProcess
+
+# Запустить процесс с переменными (JSON формат)
+python universal-worker.py/tools/process_manager.py start TestProcess --variables '{"user": "John", "amount": 100}'
+
+# Запустить процесс с переменными (key=value формат)
+python universal-worker.py/tools/process_manager.py start TestProcess --variables "user=John,amount=100" --business-key "ORDER-123"
+
+# Остановить все экземпляры процесса
+python universal-worker.py/tools/process_manager.py stop TestProcess
+
+# Удалить процесс полностью
+python universal-worker.py/tools/process_manager.py delete TestProcess
+
+# Принудительные операции без подтверждения
+python universal-worker.py/tools/process_manager.py stop TestProcess --force
+python universal-worker.py/tools/process_manager.py delete TestProcess --force
+```
+
 ## 📋 Актуальные утилиты
 
 ### start_process.py

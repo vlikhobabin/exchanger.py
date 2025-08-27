@@ -7,7 +7,7 @@ import json
 import time
 import yaml
 from pathlib import Path
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, List
 from datetime import datetime, timedelta
 import requests
 from loguru import logger
@@ -114,7 +114,9 @@ class BitrixTaskHandler:
             title = self._extract_title(variables, metadata, topic)
             
             # Формирование описания (в первой версии - все данные сообщения)
-            description = self._create_description(message_data)
+            # description = self._create_description(message_data)
+            # Теперь в описание дублируем title
+            description = title
             
             # Извлечение дополнительных параметров
             assignee_id = self._extract_assignee_id(variables, metadata)
@@ -174,6 +176,29 @@ class BitrixTaskHandler:
             if result.get('error'):
                 logger.error(f"Ошибка API Bitrix24: {result['error']}")
                 logger.error(f"Описание ошибки: {result.get('error_description', 'Не указано')}")
+                return result
+            
+            # Если задача создана успешно, создаем чек-листы
+            if result.get('result') and result['result'].get('task'):
+                created_task_id = result['result']['task'].get('id')
+                if created_task_id:
+                    # Извлекаем данные чек-листов
+                    checklists_data = self._extract_checklists(metadata)
+                    
+                    if checklists_data:
+                        logger.info(f"Создание чек-листов для задачи {created_task_id}")
+                        # Создаем чек-листы синхронно
+                        try:
+                            success = self.create_task_checklists_sync(int(created_task_id), checklists_data)
+                            if success:
+                                logger.info(f"✅ Чек-листы успешно созданы для задачи {created_task_id}")
+                            else:
+                                logger.warning(f"⚠️ Не все чек-листы созданы для задачи {created_task_id}")
+                        except Exception as e:
+                            logger.error(f"Ошибка создания чек-листов для задачи {created_task_id}: {e}")
+                            # Не прерываем выполнение, задача уже создана
+                    else:
+                        logger.debug(f"Нет данных чек-листов для задачи {created_task_id}")
             
             return result
             
@@ -532,6 +557,589 @@ class BitrixTaskHandler:
             logger.debug("Пользовательские поля UF_ в метаданных не найдены")
         
         return user_fields
+    
+    def _extract_checklists(self, metadata: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Извлечение данных чек-листов из metadata.extensionProperties
+        
+        Args:
+            metadata: Метаданные сообщения из RabbitMQ
+            
+        Returns:
+            Список чек-листов с их элементами
+        """
+        checklists = []
+        
+        try:
+            # Получаем extensionProperties из метаданных
+            extension_properties = metadata.get("extensionProperties", {})
+            
+            # Ищем поле checklists
+            checklists_data = extension_properties.get("checklists")
+            
+            if not checklists_data:
+                logger.debug("Данные чек-листов не найдены в extensionProperties")
+                return checklists
+            
+            # Парсим JSON строку с чек-листами
+            if isinstance(checklists_data, str):
+                try:
+                    parsed_checklists = json.loads(checklists_data)
+                    if isinstance(parsed_checklists, list):
+                        checklists = parsed_checklists
+                        logger.info(f"Извлечено {len(checklists)} чек-листов из метаданных")
+                        
+                        # Логируем структуру для отладки
+                        for i, checklist in enumerate(checklists):
+                            name = checklist.get('name', f'Чек-лист {i+1}')
+                            items = checklist.get('items', [])
+                            logger.debug(f"Чек-лист '{name}': {len(items)} элементов")
+                    else:
+                        logger.warning(f"Неожиданная структура чек-листов: {type(parsed_checklists)}")
+                except json.JSONDecodeError as e:
+                    logger.error(f"Ошибка парсинга JSON чек-листов: {e}")
+                    logger.error(f"Данные: {checklists_data[:200]}...")
+            elif isinstance(checklists_data, list):
+                # Если данные уже в виде списка
+                checklists = checklists_data
+                logger.info(f"Извлечено {len(checklists)} чек-листов из метаданных (прямой список)")
+            else:
+                logger.warning(f"Неожиданный тип данных чек-листов: {type(checklists_data)}")
+            
+        except Exception as e:
+            logger.error(f"Ошибка извлечения чек-листов из метаданных: {e}")
+        
+        return checklists
+    
+    # ========== МЕТОДЫ ДЛЯ РАБОТЫ С ЧЕК-ЛИСТАМИ ЗАДАЧ ==========
+    
+    def _request_sync(self, method: str, api_method: str, params: Dict[str, Any]) -> Optional[Any]:
+        """
+        Синхронное выполнение HTTP запроса к API Bitrix24
+        
+        Args:
+            method: HTTP метод (GET, POST)
+            api_method: Метод API Bitrix24
+            params: Параметры запроса
+            
+        Returns:
+            Результат запроса или None в случае ошибки
+        """
+        try:
+            url = f"{self.config.webhook_url}/{api_method}"
+            
+            if method.upper() == 'GET':
+                response = requests.get(
+                    url,
+                    params=params,
+                    timeout=self.config.request_timeout
+                )
+            else:
+                response = requests.post(
+                    url,
+                    json=params,
+                    headers={'Content-Type': 'application/json'},
+                    timeout=self.config.request_timeout
+                )
+            
+            response.raise_for_status()
+            result = response.json()
+            
+            if result.get('error'):
+                logger.error(f"Ошибка API Bitrix24 ({api_method}): {result['error']}")
+                logger.error(f"Описание ошибки: {result.get('error_description', 'Не указано')}")
+                return None
+            
+            return result.get('result')
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Ошибка запроса к API Bitrix24 ({api_method}): {e}")
+            return None
+        except json.JSONDecodeError as e:
+            logger.error(f"Ошибка декодирования ответа от API Bitrix24 ({api_method}): {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Неожиданная ошибка при запросе к API Bitrix24 ({api_method}): {e}")
+            return None
+
+    def create_checklist_group_sync(self, task_id: int, title: str) -> Optional[int]:
+        """
+        Синхронно создает группу чек-листа с названием.
+        
+        :param task_id: ID задачи
+        :param title: Название группы чек-листа
+        :return: ID созданной группы или None
+        """
+        api_method = 'task.checklistitem.add'
+        # Группа чек-листа создается с PARENT_ID = 0
+        params = {
+            'taskId': task_id,
+            'fields': {
+                'TITLE': title,
+                'PARENT_ID': 0,  # 0 означает, что это группа (корневой элемент)
+                'IS_COMPLETE': False,
+                'SORT_INDEX': '10'
+            }
+        }
+        
+        logger.debug(f"Создание группы чек-листа '{title}' для задачи {task_id}...")
+        result = self._request_sync('POST', api_method, params)
+        if result:
+            # result может быть числом или объектом
+            if isinstance(result, (int, str)):
+                group_id = int(result)
+                logger.debug(f"Группа чек-листа '{title}' создана с ID {group_id}")
+                return group_id
+            elif isinstance(result, dict) and 'ID' in result:
+                group_id = int(result['ID'])
+                logger.debug(f"Группа чек-листа '{title}' создана с ID {group_id}")
+                return group_id
+            else:
+                logger.warning(f"Неожиданный ответ при создании группы чек-листа: {result}")
+                return None
+        else:
+            logger.warning(f"Не удалось создать группу чек-листа '{title}' для задачи {task_id}")
+            return None
+
+    def add_checklist_item_sync(self, task_id: int, title: str, is_complete: bool = False, 
+                               parent_id: Optional[int] = None) -> Optional[int]:
+        """
+        Синхронно добавляет элемент в чек-лист задачи.
+        
+        :param task_id: ID задачи
+        :param title: Текст элемента чек-листа
+        :param is_complete: Выполнен ли элемент (по умолчанию False)
+        :param parent_id: ID родительского элемента (для группы)
+        :return: ID созданного элемента или None
+        """
+        api_method = 'task.checklistitem.add'
+        # Правильная структура с полем TITLE
+        params = {
+            'taskId': task_id,
+            'fields': {
+                'TITLE': title,
+                'IS_COMPLETE': is_complete
+            }
+        }
+        
+        if parent_id:
+            params['fields']['PARENT_ID'] = parent_id
+        
+        logger.debug(f"Добавление элемента '{title}' в чек-лист задачи {task_id}...")
+        result = self._request_sync('POST', api_method, params)
+        if result:
+            # result может быть числом или объектом
+            if isinstance(result, (int, str)):
+                item_id = int(result)
+                logger.debug(f"Элемент чек-листа '{title}' создан с ID {item_id}")
+                return item_id
+            elif isinstance(result, dict) and 'ID' in result:
+                item_id = int(result['ID'])
+                logger.debug(f"Элемент чек-листа '{title}' создан с ID {item_id}")
+                return item_id
+            else:
+                logger.warning(f"Неожиданный ответ при создании элемента чек-листа: {result}")
+                return None
+        else:
+            logger.warning(f"Не удалось создать элемент чек-листа '{title}' для задачи {task_id}")
+            return None
+
+    def create_task_checklists_sync(self, task_id: int, checklists_data: List[Dict[str, Any]]) -> bool:
+        """
+        Синхронно создает чек-листы для задачи на основе данных из сообщения
+        
+        Args:
+            task_id: ID задачи в Bitrix24
+            checklists_data: Список чек-листов с их элементами
+            
+        Returns:
+            True если все чек-листы созданы успешно, False иначе
+        """
+        if not checklists_data:
+            logger.debug(f"Нет данных чек-листов для создания в задаче {task_id}")
+            return True
+        
+        try:
+            logger.info(f"Создание {len(checklists_data)} чек-листов для задачи {task_id}")
+            
+            total_groups = 0
+            total_items = 0
+            errors_count = 0
+            
+            for checklist in checklists_data:
+                checklist_name = checklist.get('name', 'Без названия')
+                checklist_items = checklist.get('items', [])
+                
+                if not checklist_items:
+                    logger.warning(f"Пропущен пустой чек-лист '{checklist_name}'")
+                    continue
+                
+                try:
+                    # Создаем группу чек-листа
+                    group_id = self.create_checklist_group_sync(task_id, checklist_name)
+                    
+                    if group_id:
+                        total_groups += 1
+                        logger.debug(f"✅ Создана группа '{checklist_name}' с ID {group_id}")
+                        
+                        # Создаем элементы чек-листа в группе
+                        for item_text in checklist_items:
+                            if isinstance(item_text, str) and item_text.strip():
+                                item_id = self.add_checklist_item_sync(
+                                    task_id=task_id,
+                                    title=item_text.strip(),
+                                    is_complete=False,
+                                    parent_id=group_id
+                                )
+                                
+                                if item_id:
+                                    total_items += 1
+                                    logger.debug(f"✅ Создан элемент '{item_text}' с ID {item_id}")
+                                else:
+                                    errors_count += 1
+                                    logger.error(f"❌ Не удалось создать элемент '{item_text}' в группе {group_id}")
+                            else:
+                                logger.warning(f"Пропущен некорректный элемент чек-листа: {item_text}")
+                    else:
+                        errors_count += 1
+                        logger.error(f"❌ Не удалось создать группу '{checklist_name}', пропускаем её элементы")
+                        
+                except Exception as e:
+                    errors_count += 1
+                    logger.error(f"❌ Ошибка создания чек-листа '{checklist_name}': {e}")
+            
+            # Логируем результаты
+            if total_groups > 0 or total_items > 0:
+                logger.info(f"✅ Создано чек-листов для задачи {task_id}: {total_groups} групп, {total_items} элементов")
+            
+            if errors_count > 0:
+                logger.error(f"❌ Ошибки при создании чек-листов задачи {task_id}: {errors_count} ошибок")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Критическая ошибка при создании чек-листов задачи {task_id}: {e}")
+            return False
+    
+    async def _request(self, method: str, api_method: str, params: Dict[str, Any]) -> Optional[Any]:
+        """
+        Выполнение HTTP запроса к API Bitrix24
+        
+        Args:
+            method: HTTP метод (GET, POST)
+            api_method: Метод API Bitrix24
+            params: Параметры запроса
+            
+        Returns:
+            Результат запроса или None в случае ошибки
+        """
+        try:
+            url = f"{self.config.webhook_url}/{api_method}"
+            
+            if method.upper() == 'GET':
+                response = requests.get(
+                    url,
+                    params=params,
+                    timeout=self.config.request_timeout
+                )
+            else:
+                response = requests.post(
+                    url,
+                    json=params,
+                    headers={'Content-Type': 'application/json'},
+                    timeout=self.config.request_timeout
+                )
+            
+            response.raise_for_status()
+            result = response.json()
+            
+            if result.get('error'):
+                logger.error(f"Ошибка API Bitrix24 ({api_method}): {result['error']}")
+                logger.error(f"Описание ошибки: {result.get('error_description', 'Не указано')}")
+                return None
+            
+            return result.get('result')
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Ошибка запроса к API Bitrix24 ({api_method}): {e}")
+            return None
+        except json.JSONDecodeError as e:
+            logger.error(f"Ошибка декодирования ответа от API Bitrix24 ({api_method}): {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Неожиданная ошибка при запросе к API Bitrix24 ({api_method}): {e}")
+            return None
+
+    async def create_checklist_group(self, task_id: int, title: str) -> Optional[int]:
+        """
+        Создает группу чек-листа с названием.
+        
+        :param task_id: ID задачи
+        :param title: Название группы чек-листа
+        :return: ID созданной группы или None
+        """
+        api_method = 'task.checklistitem.add'
+        # Группа чек-листа создается с PARENT_ID = 0
+        params = {
+            'taskId': task_id,
+            'fields': {
+                'TITLE': title,
+                'PARENT_ID': 0,  # 0 означает, что это группа (корневой элемент)
+                'IS_COMPLETE': False,
+                'SORT_INDEX': '10'
+            }
+        }
+        
+        logger.debug(f"Создание группы чек-листа '{title}' для задачи {task_id}...")
+        result = await self._request('POST', api_method, params)
+        if result:
+            # result может быть числом или объектом
+            if isinstance(result, (int, str)):
+                group_id = int(result)
+                logger.debug(f"Группа чек-листа '{title}' создана с ID {group_id}")
+                return group_id
+            elif isinstance(result, dict) and 'ID' in result:
+                group_id = int(result['ID'])
+                logger.debug(f"Группа чек-листа '{title}' создана с ID {group_id}")
+                return group_id
+            else:
+                logger.warning(f"Неожиданный ответ при создании группы чек-листа: {result}")
+                return None
+        else:
+            logger.warning(f"Не удалось создать группу чек-листа '{title}' для задачи {task_id}")
+            return None
+
+    async def add_checklist_item(self, task_id: int, title: str, is_complete: bool = False, 
+                                parent_id: Optional[int] = None) -> Optional[int]:
+        """
+        Добавляет элемент в чек-лист задачи.
+        
+        :param task_id: ID задачи
+        :param title: Текст элемента чек-листа
+        :param is_complete: Выполнен ли элемент (по умолчанию False)
+        :param parent_id: ID родительского элемента (для группы)
+        :return: ID созданного элемента или None
+        """
+        api_method = 'task.checklistitem.add'  # Исправленный метод
+        # Правильная структура с полем TITLE
+        params = {
+            'taskId': task_id,
+            'fields': {
+                'TITLE': title,
+                'IS_COMPLETE': is_complete
+            }
+        }
+        
+        if parent_id:
+            params['fields']['PARENT_ID'] = parent_id
+        
+        logger.debug(f"Добавление элемента '{title}' в чек-лист задачи {task_id}...")
+        result = await self._request('POST', api_method, params)
+        if result:
+            # result может быть числом или объектом
+            if isinstance(result, (int, str)):
+                item_id = int(result)
+                logger.debug(f"Элемент чек-листа '{title}' создан с ID {item_id}")
+                return item_id
+            elif isinstance(result, dict) and 'ID' in result:
+                item_id = int(result['ID'])
+                logger.debug(f"Элемент чек-листа '{title}' создан с ID {item_id}")
+                return item_id
+            else:
+                logger.warning(f"Неожиданный ответ при создании элемента чек-листа: {result}")
+                return None
+        else:
+            logger.warning(f"Не удалось создать элемент чек-листа '{title}' для задачи {task_id}")
+            return None
+
+    async def get_task_checklists(self, task_id: int) -> List[Dict[str, Any]]:
+        """
+        Получает чек-листы задачи.
+        
+        :param task_id: ID задачи
+        :return: Список чек-листов задачи
+        """
+        api_method = 'task.checklistitem.getlist'  # Исправленный метод
+        params = {'taskId': task_id}  # Исправленный параметр
+        logger.debug(f"Запрос чек-листов для задачи {task_id}...")
+        result = await self._request('GET', api_method, params)
+        if result:
+            if isinstance(result, list):
+                logger.debug(f"Получено {len(result)} элементов чек-листов для задачи {task_id}")
+                
+                return result
+            else:
+                logger.warning(f"Неожиданный тип ответа для чек-листов задачи {task_id}: {type(result)}")
+                return []
+        return []
+
+    async def delete_checklist_item(self, item_id: int, task_id: int) -> bool:
+        """
+        Удаляет элемент чек-листа.
+        
+        :param item_id: ID элемента чек-листа
+        :param task_id: ID задачи
+        :return: True в случае успеха, иначе False
+        """
+        api_method = 'tasks.task.checklist.delete'  # ← ИСПРАВЛЕННЫЙ РАБОЧИЙ МЕТОД
+        params = {'taskId': task_id, 'checkListItemId': item_id}  # ← ИСПРАВЛЕННЫЕ ПАРАМЕТРЫ
+        result = await self._request('POST', api_method, params)
+        return bool(result)
+
+    async def clear_task_checklists(self, task_id: int) -> bool:
+        """
+        Очищает все чек-листы задачи.
+        
+        :param task_id: ID задачи
+        :return: True в случае успеха
+        """
+        try:
+            # Получаем все элементы чек-листов
+            items = await self.get_task_checklists(task_id)
+            
+            if not items:
+                logger.debug(f"У задачи {task_id} нет чек-листов для очистки")
+                return True
+            
+            logger.debug(f"Очистка {len(items)} элементов чек-листов задачи {task_id}...")
+            
+            # Удаляем все элементы
+            deleted_count = 0
+            errors_count = 0
+            failed_items = []
+            
+            for item in items:
+                item_id = item.get('ID') or item.get('id')
+                item_title = item.get('TITLE', 'Без названия')
+                parent_id = item.get('PARENT_ID') or item.get('parent_id')
+                
+                if item_id:
+                    try:
+                        # Используем существующий метод для консистентности
+                        success = await self.delete_checklist_item(int(item_id), task_id)
+                        if success:
+                            deleted_count += 1
+                            logger.debug(f"✅ Удален ID:{item_id} - '{item_title}'")
+                        else:
+                            errors_count += 1
+                            logger.error(f"❌ НЕ УДАЛЕН ID:{item_id} - '{item_title}'")
+                            failed_items.append({
+                                'item_id': item_id,
+                                'title': item_title,
+                                'error': 'API вернул неуспешный результат'
+                            })
+                                
+                    except Exception as e:
+                        errors_count += 1
+                        failed_items.append({
+                            'item_id': item_id,
+                            'title': item_title,
+                            'error': str(e)
+                        })
+                        logger.error(f"❌ ОШИБКА ID:{item_id} '{item_title}': {e}")
+                else:
+                    logger.warning(f"⚠️ Элемент без ID пропущен: '{item_title}'")
+            
+            # Логируем результаты
+            if deleted_count > 0:
+                logger.info(f"✅ Успешно удалено {deleted_count} элементов чек-листов задачи {task_id}")
+            
+            if errors_count > 0:
+                logger.error(f"❌ Не удалось удалить {errors_count} элементов чек-листов задачи {task_id}:")
+                for failed_item in failed_items[:5]:  # Показываем первые 5 ошибок для краткости
+                    logger.error(f"   • Элемент {failed_item['item_id']} '{failed_item['title']}': {failed_item['error']}")
+                if len(failed_items) > 5:
+                    logger.error(f"   ... и еще {len(failed_items) - 5} ошибок")
+            
+            # Возвращаем True только если все элементы удалены успешно
+            if errors_count == 0:
+                return True
+            else:
+                logger.error(f"❌ Очистка чек-листов задачи {task_id} завершена с ошибками: {errors_count}/{len(items)} элементов не удалось удалить")
+                return False
+            
+        except Exception as e:
+            logger.warning(f"Ошибка очистки чек-листов задачи {task_id}: {e}")
+            return False
+
+    async def create_task_checklists(self, task_id: int, checklists_data: List[Dict[str, Any]]) -> bool:
+        """
+        Создает чек-листы для задачи на основе данных из сообщения
+        
+        Args:
+            task_id: ID задачи в Bitrix24
+            checklists_data: Список чек-листов с их элементами
+            
+        Returns:
+            True если все чек-листы созданы успешно, False иначе
+        """
+        if not checklists_data:
+            logger.debug(f"Нет данных чек-листов для создания в задаче {task_id}")
+            return True
+        
+        try:
+            logger.info(f"Создание {len(checklists_data)} чек-листов для задачи {task_id}")
+            
+            total_groups = 0
+            total_items = 0
+            errors_count = 0
+            
+            for checklist in checklists_data:
+                checklist_name = checklist.get('name', 'Без названия')
+                checklist_items = checklist.get('items', [])
+                
+                if not checklist_items:
+                    logger.warning(f"Пропущен пустой чек-лист '{checklist_name}'")
+                    continue
+                
+                try:
+                    # Создаем группу чек-листа
+                    group_id = await self.create_checklist_group(task_id, checklist_name)
+                    
+                    if group_id:
+                        total_groups += 1
+                        logger.debug(f"✅ Создана группа '{checklist_name}' с ID {group_id}")
+                        
+                        # Создаем элементы чек-листа в группе
+                        for item_text in checklist_items:
+                            if isinstance(item_text, str) and item_text.strip():
+                                item_id = await self.add_checklist_item(
+                                    task_id=task_id,
+                                    title=item_text.strip(),
+                                    is_complete=False,
+                                    parent_id=group_id
+                                )
+                                
+                                if item_id:
+                                    total_items += 1
+                                    logger.debug(f"✅ Создан элемент '{item_text}' с ID {item_id}")
+                                else:
+                                    errors_count += 1
+                                    logger.error(f"❌ Не удалось создать элемент '{item_text}' в группе {group_id}")
+                            else:
+                                logger.warning(f"Пропущен некорректный элемент чек-листа: {item_text}")
+                    else:
+                        errors_count += 1
+                        logger.error(f"❌ Не удалось создать группу '{checklist_name}', пропускаем её элементы")
+                        
+                except Exception as e:
+                    errors_count += 1
+                    logger.error(f"❌ Ошибка создания чек-листа '{checklist_name}': {e}")
+            
+            # Логируем результаты
+            if total_groups > 0 or total_items > 0:
+                logger.info(f"✅ Создано чек-листов для задачи {task_id}: {total_groups} групп, {total_items} элементов")
+            
+            if errors_count > 0:
+                logger.error(f"❌ Ошибки при создании чек-листов задачи {task_id}: {errors_count} ошибок")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Критическая ошибка при создании чек-листов задачи {task_id}: {e}")
+            return False
     
     def _send_success_message(self, original_message: Dict[str, Any], 
                              bitrix_response: Dict[str, Any], original_queue: str) -> bool:
