@@ -45,7 +45,8 @@ class WorkerConfig(BaseSettings):
     message_processing_timeout: int = Field(default=120, env="MESSAGE_PROCESSING_TIMEOUT")  # секунды
     
     class Config:
-        env_prefix = "WORKER_"
+        # Убираем env_prefix чтобы использовать переменные без префикса
+        pass
 
 SUPPORTED_TOPICS: List[str] = [
     "bitrix_create_task", "bitrix_update_task", "bitrix_create_deal",

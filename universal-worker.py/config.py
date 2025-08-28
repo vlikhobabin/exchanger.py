@@ -85,7 +85,8 @@ class WorkerConfig(BaseSettings):
     response_processing_interval: int = Field(default=5, env="RESPONSE_PROCESSING_INTERVAL")  # секунды
     
     class Config:
-        env_prefix = "WORKER_"
+        # Убираем env_prefix чтобы использовать переменные без префикса
+        pass
 
 
 class RoutingConfig:
