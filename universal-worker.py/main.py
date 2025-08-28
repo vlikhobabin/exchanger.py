@@ -112,15 +112,11 @@ def main():
         # Ожидание завершения
         try:
             while not shutdown_event.is_set():
-                # Проверка состояния worker каждые 10 секунд
-                if shutdown_event.wait(10):
+                # Проверка состояния worker с интервалом HEARTBEAT_INTERVAL
+                if shutdown_event.wait(worker_config.heartbeat_interval):
                     break
                 
-                # Логирование состояния
-                worker_status = "работает" if worker_running.is_set() else "остановлен"
-                logger.info(f"Статус Worker: {worker_status}")
-                
-                # Если worker упал, завершаем всё
+                # Логирование состояния только при изменении или проблемах
                 if not worker_running.is_set():
                     logger.error("Worker остановлен, завершение приложения")
                     break

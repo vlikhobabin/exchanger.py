@@ -341,7 +341,7 @@ class UniversalCamundaWorker:
                 return True
             
             # DEBUG: Сохраняем сообщение в отладочный файл перед обработкой (если включено)
-            if self.camunda_config.debug_save_response_messages:
+            if self.config.debug_save_response_messages:
                 self._save_response_message_debug(message_data)
             
             self.stats["processed_responses"] += 1
@@ -704,7 +704,7 @@ class UniversalCamundaWorker:
         return True
     
     def _monitor_loop(self):
-        """Поток мониторинга статистики и обработки ответов"""
+        """Поток мониторинга соединений и обработки ответов"""
         last_response_check = 0
         
         while not self.stop_event.is_set():
@@ -712,16 +712,6 @@ class UniversalCamundaWorker:
                 current_time = time.time()
                 
                 if self.running and self.stats["start_time"]:
-                    uptime = current_time - self.stats["start_time"]
-                    logger.info(
-                        f"Monitor - Uptime: {uptime:.0f}s | "
-                        f"Обработано: {self.stats['processed_tasks']} | "
-                        f"Успешно: {self.stats['successful_tasks']} | "
-                        f"Ошибки: {self.stats['failed_tasks']} | "
-                        f"Ответов: {self.stats['processed_responses']} | "
-                        f"Завершено: {self.stats['successful_completions']}"
-                    )
-                    
                     # Проверка соединения с RabbitMQ
                     if not self.rabbitmq_client.is_connected():
                         logger.warning("RabbitMQ соединение потеряно, попытка переподключения...")
@@ -732,8 +722,8 @@ class UniversalCamundaWorker:
                         self._check_response_queue()
                         last_response_check = current_time
                 
-                # Мониторинг каждые 60 секунд
-                self.stop_event.wait(60)
+                # Проверка каждые heartbeat_interval секунд
+                self.stop_event.wait(self.worker_config.heartbeat_interval)
                 
             except Exception as e:
                 logger.error(f"Ошибка в мониторинге: {e}")
