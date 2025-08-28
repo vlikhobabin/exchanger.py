@@ -340,9 +340,9 @@ class UniversalCamundaWorker:
                 )
                 return True
             
-            # DEBUG: Сохраняем сообщение в отладочный файл перед обработкой
-            # TODO: Удалить после завершения отладки
-            self._save_response_message_debug(message_data)
+            # DEBUG: Сохраняем сообщение в отладочный файл перед обработкой (если включено)
+            if self.camunda_config.debug_save_response_messages:
+                self._save_response_message_debug(message_data)
             
             self.stats["processed_responses"] += 1
             

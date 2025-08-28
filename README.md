@@ -115,6 +115,43 @@ python main.py
 
 ## Мониторинг и диагностика
 
+### Логирование
+
+Система использует собственные файлы логов (не systemd journal):
+
+```bash
+# Просмотр последних записей логов
+tail -100 /opt/exchanger.py/logs/camunda_worker.log      # Universal Worker
+tail -100 /opt/exchanger.py/logs/worker.log              # Task Creator
+tail -100 /opt/exchanger.py/logs/camunda_worker_errors.log  # Ошибки Worker
+tail -100 /opt/exchanger.py/logs/worker_errors.log          # Ошибки Creator
+
+# Мониторинг логов в реальном времени
+tail -f /opt/exchanger.py/logs/camunda_worker.log
+tail -f /opt/exchanger.py/logs/worker.log
+
+# Системные сервисы
+systemctl status exchanger-worker.service
+systemctl status exchanger-creator.service
+journalctl -u exchanger-worker.service -f
+journalctl -u exchanger-creator.service -f
+```
+
+**Структура логов:**
+- `logs/camunda_worker.log` - основной лог Universal Worker (ротация 100MB, хранение 30 дней)
+- `logs/worker.log` - основной лог Task Creator (ротация 100MB, хранение 30 дней)  
+- `logs/*_errors.log` - отдельные файлы ошибок (ротация 10MB)
+- `logs/debug/` - отладочные файлы (создаются только при `DEBUG_SAVE_RESPONSE_MESSAGES=true`)
+
+**Отладочное логирование:**
+```bash
+# Включить сохранение детальных ответов в JSON файл (для диагностики)
+DEBUG_SAVE_RESPONSE_MESSAGES=true
+
+# Отключить отладочное логирование (по умолчанию)
+DEBUG_SAVE_RESPONSE_MESSAGES=false
+```
+
 ### Universal Worker
 
 ```bash

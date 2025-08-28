@@ -33,6 +33,9 @@ class CamundaConfig(BaseSettings):
     # Отладка
     is_debug: bool = Field(default=False, env="CAMUNDA_DEBUG")
     
+    # Сохранять отладочные сообщения ответов в JSON файл
+    debug_save_response_messages: bool = Field(default=False, env="DEBUG_SAVE_RESPONSE_MESSAGES")
+    
     # Sleep при ошибках
     sleep_seconds: int = Field(default=30, env="CAMUNDA_SLEEP_SECONDS")
     
