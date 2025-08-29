@@ -1,1 +1,0 @@
-python universal-worker.py/tools/process_manager.py stop Process_3f946f12_5071_4a9f_9960_0f57b4c05e45 --force

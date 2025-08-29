@@ -5,24 +5,24 @@
 ## Архитектура решения
 
 ```
-StormBPMN ←→ Camunda-StormBPMN Sync ←→ Camunda BPM ←→ Universal Worker ←→ RabbitMQ ←→ Task Creator ←→ External Systems
+StormBPMN ←→ Camunda-StormBPMN Sync ←→ Camunda BPM ←→ Camunda Worker ←→ RabbitMQ ←→ Task Creator ←→ External Systems
                                                                          ↓
                                                                    Task Tracker (в планах)
 ```
 
 ## Компоненты системы
 
-### 🔄 Universal Worker (`universal-worker.py`)
+### 🔄 Camunda Worker (`camunda-worker/`)
 
 **Назначение**: Отвечает за получение External Tasks из Camunda BPM, обогащение их метаданными и отправку в RabbitMQ.
-📖 **[Полная документация](universal-worker.py/README.md)**
+📖 **[Полная документация](camunda-worker/README.md)**
 
 ---
 
-### 📨 Task Creator (`task-creator.py`)
+### 📨 Task Creator (`task-creator/`)
 
 **Назначение**: Слушает очереди RabbitMQ и создает задачи во внешних системах (Bitrix24, OpenProject и др.).
-📖 **[Полная документация](task-creator.py/README.md)**
+📖 **[Полная документация](task-creator/README.md)**
 
 ---
 
@@ -104,12 +104,12 @@ nano .env
 ### Запуск
 
 ```bash
-# Запуск Universal Worker
-cd universal-worker.py
+# Запуск Camunda Worker
+cd camunda-worker
 python main.py
 
 # Запуск Task Creator (в другом терминале)
-cd task-creator.py
+cd task-creator
 python main.py
 ```
 
@@ -121,24 +121,24 @@ python main.py
 
 ```bash
 # Просмотр последних записей логов
-tail -100 /opt/exchanger.py/logs/camunda_worker.log      # Universal Worker
+tail -100 /opt/exchanger.py/logs/camunda_worker.log      # Camunda Worker
 tail -100 /opt/exchanger.py/logs/worker.log              # Task Creator
-tail -100 /opt/exchanger.py/logs/camunda_worker_errors.log  # Ошибки Worker
-tail -100 /opt/exchanger.py/logs/worker_errors.log          # Ошибки Creator
+tail -100 /opt/exchanger.py/logs/camunda_worker_errors.log  # Ошибки Camunda Worker
+tail -100 /opt/exchanger.py/logs/worker_errors.log          # Ошибки Task Creator
 
 # Мониторинг логов в реальном времени
 tail -f /opt/exchanger.py/logs/camunda_worker.log
 tail -f /opt/exchanger.py/logs/worker.log
 
 # Системные сервисы
-systemctl status exchanger-worker.service
-systemctl status exchanger-creator.service
-journalctl -u exchanger-worker.service -f
-journalctl -u exchanger-creator.service -f
+systemctl status exchanger-camunda-worker.service
+systemctl status exchanger-task-creator.service
+journalctl -u exchanger-camunda-worker.service -f
+journalctl -u exchanger-task-creator.service -f
 ```
 
 **Структура логов:**
-- `logs/camunda_worker.log` - основной лог Universal Worker (ротация 100MB, хранение 30 дней)
+- `logs/camunda_worker.log` - основной лог Camunda Worker (ротация 100MB, хранение 30 дней)
 - `logs/worker.log` - основной лог Task Creator (ротация 100MB, хранение 30 дней)  
 - `logs/*_errors.log` - отдельные файлы ошибок (ротация 10MB)
 - `logs/debug/` - отладочные файлы (создаются только при `DEBUG_SAVE_RESPONSE_MESSAGES=true`)
@@ -152,11 +152,11 @@ DEBUG_SAVE_RESPONSE_MESSAGES=true
 DEBUG_SAVE_RESPONSE_MESSAGES=false
 ```
 
-### Universal Worker
+### Camunda Worker
 
 ```bash
 # Статус Worker и очередей
-cd universal-worker.py
+cd camunda-worker
 python tools/worker_diagnostics.py
 python tools/check_queues.py
 
@@ -182,21 +182,21 @@ python tools/camunda_processes.py --stats
 📖 `scripts/SERVICES_MANAGEMENT.md`
 
 Сервисы:
-- `exchanger-worker.service` — Universal Worker
-- `exchanger-creator.service` — Task Creator
+- `exchanger-camunda-worker.service` — Camunda Worker
+- `exchanger-task-creator.service` — Task Creator
 
 ## Документация компонентов
 
-- 📖 **[Universal Worker](universal-worker.py/README.md)** - Детальное описание Camunda Worker
-- 📖 **[Task Creator](task-creator.py/README.md)** - Детальное описание RabbitMQ Worker
-- 📖 **[Camunda-StormBPMN Sync](camunda-sync.py/README.md)** - Синхронизация BPMN диаграмм
-- 📖 **[Tools Documentation](universal-worker.py/tools/README.md)** - Сервисные скрипты и утилиты
+- 📖 **[Camunda Worker](camunda-worker/README.md)** - Детальное описание Camunda Worker
+- 📖 **[Task Creator](task-creator/README.md)** - Детальное описание RabbitMQ Worker
+- 📖 **[Camunda-StormBPMN Sync](camunda-sync/README.md)** - Синхронизация BPMN диаграмм
+- 📖 **[Tools Documentation](camunda-worker/tools/README.md)** - Сервисные скрипты и утилиты
 
 ## Статус разработки
 
 | Компонент | Статус | Описание |
 |-----------|--------|----------|
-| Universal Worker | ✅ Production | Полностью готов, тестирован |
+| Camunda Worker | ✅ Production | Полностью готов, тестирован |
 | Task Creator - Bitrix24 | ✅ Production | Готов к использованию |
 | Camunda-StormBPMN Sync | ✅ Production | Готов к использованию |
 | Task Creator - OpenProject | 🚧 Development | В разработке |

@@ -1,0 +1,15 @@
+{
+  "terminal.integrated.profiles.linux": {
+    "bash": {
+      "path": "/bin/bash",
+      "args": ["--login"]
+    }
+  },
+  "terminal.integrated.defaultProfile.linux": "bash",
+  "terminal.integrated.shell.linux": "/bin/bash",
+  "terminal.integrated.shellArgs.linux": ["--login"],
+  "terminal.integrated.cwd": "${workspaceFolder}",
+  "terminal.integrated.env.linux": {
+    "TERM": "xterm-256color"
+  }
+}
