@@ -231,7 +231,7 @@ timeout = bitrix_config.request_timeout
 
 #### ➕ Добавляемые элементы:
 - Camunda namespaces в корневой элемент
-- `camunda:historyTimeToLive="1"` в процесс  
+- `camunda:historyTimeToLive="365"` в процесс  
 - `camunda:type="external"` и `camunda:topic="bitrix_create_task"` в serviceTask
 - `<bpmn:conditionExpression>` для потоков "да"/"нет"
 - `<camunda:properties>` с информацией об ответственных в serviceTask

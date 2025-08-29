@@ -110,21 +110,48 @@ class BPMNConverter:
         #         print(f"⚠️ Ошибка при выполнении предобработки: {e}")
         #         print("Продолжаем стандартную обработку...")
         
-        # Встроенная логика из расширения Process_1d4oa6g46 (предобработка)
-        self._insert_intermediate_tasks_for_yes_flows(root)
         
         # Применяем трансформации
+
+        # Вставляем промежуточные задачи между шлюзами для разрыва цепочек Gateway → Gateway
+        self._insert_intermediate_tasks_for_yes_flows(root)  
+
+        # Добавляем пространства имен Camunda и XSI для совместимости с Camunda Platform
         self._add_camunda_namespaces(root)
+
+        # Обновляем атрибуты процесса: ID, название, isExecutable=true, historyTimeToLive 365- 1 год
         self._update_process_attributes(root)
+
+        # Удаляем секцию collaboration и связанные элементы (textAnnotation, group, association)
         self._remove_collaboration_section(root)
+
+        # Удаляем промежуточные события и перенаправляем потоки напрямую
         self._remove_intermediate_events(root)
+
+        # Конвертируем все типы задач (userTask, manualTask, callActivity) в serviceTask
         self._convert_tasks_to_service_tasks(root)
+
+        # Встраиваем данные об ответственных из JSON файла в свойства задач
+        # todo: рефакторинг
         self._add_assignee_properties(root)
+
+        # Парсим и встраиваем чек-листы из описаний задач в JSON формате
         self._add_checklist_properties(root)
+
+        # Добавляем условные выражения для потоков "да"/"нет" и свойства результата к задачам
         self._add_condition_expressions(root)
+
+        # Исправляем порядок элементов внутри BPMN узлов согласно спецификации
         self._fix_element_order(root)
+
+        # Исправляем конфликты default flow - убираем атрибут default у потоков с условиями
         self._fix_default_flows(root)
+
+        # Очищаем диаграммные элементы, ссылающиеся на удаленные элементы процесса
         self._clean_diagram_elements(root)
+
+        # Обновляем BPMNPlane с правильным bpmnElement, ссылающимся на процесс
+        # что это вообще такое?!
         self._update_bpmn_plane(root)
         
         # ВРЕМЕННО ОТКЛЮЧЕНО: Выполняем постобработку (если есть расширение)
@@ -180,49 +207,54 @@ class BPMNConverter:
         """Обновить атрибуты процесса"""
         print("🔧 Обновление атрибутов процесса...")
         
-        # Извлекаем данные из расширения custom:diagram
-        process_data = self._extract_process_data_from_extension(root)
+        # Получаем все участники из collaboration
+        participants = root.findall('.//bpmn:participant', self.namespaces)
         
-        # Ищем элемент process
-        process = root.find('.//bpmn:process', self.namespaces)
-        if process is not None:
-            # Получаем текущий ID процесса
-            current_id = process.get('id')
+        if not participants:
+            print("⚠️ Участники (bpmn:participant) не найдены")
+            return
+        
+        print(f"📋 Найдено участников: {len(participants)}")
+        
+        # Обрабатываем каждого участника
+        for participant in participants:
+            participant_name = participant.get('name')
+            process_ref = participant.get('processRef')
             
-            # Если из расширения получили ID, используем его как основу для ID процесса
-            if process_data['id']:
-                # Преобразуем custom:id в подходящий для процесса формат
-                # Например, из UUID делаем Process_uuid
-                new_id = f"Process_{process_data['id'].replace('-', '_')}"
-                if new_id != current_id:
-                    print(f"🔄 Обновляем ID процесса: {current_id} → {new_id}")
-                    process.set('id', new_id)
-                    current_id = new_id
-            elif not current_id:
-                # Если вообще нет ID, ставим дефолтный (маловероятно)
-                current_id = 'Process_default'
-                process.set('id', current_id)
-                print(f"⚠️ Установлен дефолтный ID процесса: {current_id}")
+            if not process_ref:
+                print(f"⚠️ У участника '{participant_name}' отсутствует processRef")
+                continue
+                
+            print(f"🔍 Обрабатываем участника: '{participant_name}' (processRef: {process_ref})")
             
-            # Устанавливаем isExecutable в true
-            process.set('isExecutable', 'true')
+            # Находим процесс по его ID (processRef)
+            process = root.find(f'.//bpmn:process[@id="{process_ref}"]', self.namespaces)
             
-            # Добавляем только необходимые Camunda атрибуты
-            process.set('{http://camunda.org/schema/1.0/bpmn}historyTimeToLive', '1')
-            
-            # Обновляем name процесса из данных расширения custom:diagram
-            if process_data['name']:
-                print(f"🔄 Обновляем название процесса: {process_data['name']}")
-                process.set('name', process_data['name'])
-            elif not process.get('name'):
-                # Если нет названия вообще, ставим дефолтное
-                default_name = 'Автоматически сконвертированный процесс'
-                process.set('name', default_name)
-                print(f"⚠️ Установлено дефолтное название: {default_name}")
-            
-            print(f"✅ Процесс обновлен (ID: {current_id})")
-        else:
-            print("⚠️ Элемент process не найден")
+            if process is not None:
+                current_id = process.get('id')
+                
+                # ID процесса оставляем как был, не меняем!
+                print(f"🔧 Обновляем процесс с ID: {current_id}")
+                
+                # Устанавливаем isExecutable в true
+                process.set('isExecutable', 'true')
+                
+                # Добавляем только необходимые Camunda атрибуты
+                process.set('{http://camunda.org/schema/1.0/bpmn}historyTimeToLive', '365')
+                
+                # Устанавливаем имя процесса такое же как у участника
+                if participant_name:
+                    print(f"🔄 Устанавливаем название процесса: '{participant_name}'")
+                    process.set('name', participant_name)
+                elif not process.get('name'):
+                    # Если нет названия вообще, ставим дефолтное
+                    default_name = 'Автоматически сконвертированный процесс'
+                    process.set('name', default_name)
+                    print(f"⚠️ Установлено дефолтное название: {default_name}")
+                
+                print(f"✅ Процесс обновлен (ID: {current_id}, Name: '{process.get('name')}')")
+            else:
+                print(f"⚠️ Процесс с ID '{process_ref}' не найден")
     
     def _remove_collaboration_section(self, root):
         """Удалить секцию collaboration"""

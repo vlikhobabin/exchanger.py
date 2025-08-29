@@ -70,6 +70,19 @@ from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
+# Загрузка переменных окружения из .env файла
+try:
+    from dotenv import load_dotenv
+    # Ищем .env файл в корне проекта (на 3 уровня выше от tools/)
+    env_path = Path(__file__).parent.parent.parent / '.env'
+    if env_path.exists():
+        load_dotenv(env_path)
+        print(f"✅ Загружены переменные окружения из {env_path}", file=sys.stderr)
+    else:
+        print(f"⚠️ Файл .env не найден по пути {env_path}", file=sys.stderr)
+except ImportError:
+    print(f"⚠️ python-dotenv не установлен, переменные окружения из .env не загружены", file=sys.stderr)
+
 # Импорт конфигурации Bitrix24 из существующего модуля
 try:
     # Попытка импорта из task-creator.py модуля
