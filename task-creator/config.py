@@ -38,6 +38,9 @@ class WorkerConfig(BaseSettings):
     retry_delay: int = Field(default=5, env="RETRY_DELAY")  # секунды
     heartbeat_interval: int = Field(default=60, env="HEARTBEAT_INTERVAL")  # секунды
     
+    # Настройки логирования монитора
+    monitor_log_interval: int = Field(default=300, env="MONITOR_LOG_INTERVAL")  # секунды
+    
     # Настройки обработки сообщений
     max_messages_per_batch: int = Field(default=10, env="MAX_MESSAGES_PER_BATCH")
     message_processing_timeout: int = Field(default=120, env="MESSAGE_PROCESSING_TIMEOUT")  # секунды

@@ -14,6 +14,8 @@ import os
 from typing import Dict, Any, Optional
 from loguru import logger
 
+# SSL Patch - ДОЛЖЕН быть импортирован ДО ExternalTaskClient
+import ssl_patch
 from camunda.client.external_task_client import ExternalTaskClient
 from camunda.external_task.external_task import ExternalTask
 from config import camunda_config, worker_config, routing_config, rabbitmq_config

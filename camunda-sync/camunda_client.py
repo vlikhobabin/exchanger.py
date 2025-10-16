@@ -8,8 +8,12 @@ import os
 from typing import Dict, List, Optional, Any, Tuple
 from pathlib import Path
 import requests
+import urllib3
 from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
+# Отключение SSL warnings для Camunda
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 from config import camunda_config
 
@@ -93,6 +97,10 @@ class CamundaClient:
         logger.debug(f"Запрос: {method} {url}")
         
         try:
+            # Добавляем verify=False для SSL
+            if 'verify' not in kwargs:
+                kwargs['verify'] = False
+                
             response = self.session.request(
                 method=method,
                 url=url,

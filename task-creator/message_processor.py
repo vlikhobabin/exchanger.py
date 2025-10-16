@@ -11,6 +11,7 @@ from loguru import logger
 
 from config import worker_config, systems_config, tracker_config
 from rabbitmq_consumer import RabbitMQConsumer
+from error_tracker import ErrorTracker
 import importlib
 
 
@@ -39,6 +40,9 @@ class MessageProcessor:
         
         # Потоки для tracker'ов
         self.tracker_threads = {}
+        
+        # Система отслеживания критических ошибок
+        self.error_tracker = ErrorTracker()
         
         # Статистика
         self.stats = {
@@ -226,6 +230,11 @@ class MessageProcessor:
             if handler_type in self.stats["handler_stats"]:
                 self.stats["handler_stats"][handler_type]["failed"] += 1
             
+            # Отслеживание критических ошибок
+            if self.error_tracker.add_critical_error("message_processing", f"{handler_type}: {e}"):
+                logger.critical("Критический порог ошибок достигнут! Инициируется graceful shutdown...")
+                self.shutdown()
+            
             logger.error(f"Критическая ошибка при обработке сообщения через {handler_type}: {e}")
             return False
     
@@ -286,6 +295,12 @@ class MessageProcessor:
                     if tracker_key in self.stats["tracker_stats"]:
                         self.stats["tracker_stats"][tracker_key]["errors"] += 1
                     
+                    # Отслеживание ошибок tracker'а
+                    if self.error_tracker.add_error("tracker_error", f"{tracker_key}: {e}"):
+                        logger.critical("Критический порог ошибок tracker'а достигнут! Инициируется graceful shutdown...")
+                        self.shutdown()
+                        break
+                    
                     # Задержка при ошибке
                     self.shutdown_event.wait(30)
             
@@ -328,11 +343,19 @@ class MessageProcessor:
             return False
     
     def _monitor_loop(self):
-        """Поток мониторинга статистики"""
+        """Оптимизированный поток мониторинга статистики"""
+        last_log_time = 0
+        last_reconnect_log_time = 0
+        
         while not self.shutdown_event.is_set() and self.running:
             try:
-                if self.stats["start_time"]:
-                    uptime = time.time() - self.stats["start_time"]
+                current_time = time.time()
+                
+                # Логируем полную статистику только по интервалу monitor_log_interval
+                should_log_stats = (current_time - last_log_time) >= self.config.monitor_log_interval
+                
+                if self.stats["start_time"] and should_log_stats:
+                    uptime = current_time - self.stats["start_time"]
                     
                     # Общая статистика
                     logger.info(
@@ -355,19 +378,29 @@ class MessageProcessor:
                     # Статистика по tracker'ам
                     for tracker_key, stats in self.stats["tracker_stats"].items():
                         if stats["cycles_completed"] > 0:
-                            tracker_uptime = time.time() - stats["start_time"]
+                            tracker_uptime = current_time - stats["start_time"]
                             logger.info(
                                 f"  {tracker_key}: {stats['cycles_completed']} циклов, "
                                 f"uptime: {tracker_uptime:.0f}s, "
                                 f"ошибки: {stats['errors']}"
                             )
                     
-                    # Проверка соединения с RabbitMQ
-                    if not self.consumer.is_connected():
+                    last_log_time = current_time
+                
+                # Проверка соединения с RabbitMQ (каждый цикл, но логируем реже)
+                if not self.consumer.is_connected():
+                    # Логируем reconnect попытки не чаще раза в 5 минут
+                    should_log_reconnect = (current_time - last_reconnect_log_time) >= 300
+                    
+                    if should_log_reconnect:
                         logger.warning("RabbitMQ соединение потеряно, попытка переподключения...")
-                        if self.consumer.reconnect():
+                        last_reconnect_log_time = current_time
+                    
+                    if self.consumer.reconnect():
+                        if should_log_reconnect:
                             logger.info("Переподключение к RabbitMQ успешно")
-                        else:
+                    else:
+                        if should_log_reconnect:
                             logger.error("Не удалось переподключиться к RabbitMQ")
                 
                 # Мониторинг каждые HEARTBEAT_INTERVAL секунд
@@ -375,6 +408,13 @@ class MessageProcessor:
                 
             except Exception as e:
                 logger.error(f"Ошибка в мониторинге: {e}")
+                
+                # Отслеживание ошибок мониторинга
+                if self.error_tracker.add_error("monitor_error", str(e)):
+                    logger.critical("Критический порог ошибок мониторинга достигнут! Инициируется graceful shutdown...")
+                    self.shutdown()
+                    break
+                
                 self.shutdown_event.wait(10)
     
     def shutdown(self):
@@ -434,6 +474,12 @@ class MessageProcessor:
                         f"uptime: {tracker_uptime:.0f}s, "
                         f"ошибки: {stats['errors']}"
                     )
+        
+        # Финальная статистика ошибок
+        error_stats = self.error_tracker.get_stats()
+        if error_stats["total_errors"] > 0:
+            logger.info(f"Статистика ошибок: {error_stats['total_errors']} ошибок, "
+                       f"критических событий: {error_stats['critical_events']}")
         
         logger.info("Message Processor завершен")
     

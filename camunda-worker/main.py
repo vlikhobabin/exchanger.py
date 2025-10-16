@@ -8,6 +8,8 @@ import threading
 import time
 from loguru import logger
 
+# SSL Patch - ДОЛЖЕН быть импортирован ДО ExternalTaskClient
+import ssl_patch
 from config import worker_config
 from camunda_worker import UniversalCamundaWorker
 
@@ -79,6 +81,15 @@ def main():
         logger.info("Автор: EG-Holding")
         logger.info("Режим: Интегрированная обработка задач и ответов")
         logger.info("=" * 60)
+        
+        # Проверка применения SSL патча
+        if ssl_patch.is_patch_applied():
+            patch_info = ssl_patch.get_patch_info()
+            logger.info("🔒 SSL Patch: Активен")
+            logger.info(f"   - Описание: {patch_info['description']}")
+            logger.info("   - Все HTTP запросы используют verify=False")
+        else:
+            logger.warning("⚠️  SSL Patch: НЕ применен!")
         
         # Создание основного worker
         worker = UniversalCamundaWorker()

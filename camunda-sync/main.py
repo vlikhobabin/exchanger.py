@@ -4,7 +4,11 @@
 Модуль синхронизации схем процессов между StormBPMN и Camunda
 """
 import sys
+import urllib3
 from loguru import logger
+
+# Отключение SSL warnings для Camunda
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 from config import worker_config, stormbpmn_config, camunda_config, sync_config
 

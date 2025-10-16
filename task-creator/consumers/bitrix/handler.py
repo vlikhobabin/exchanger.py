@@ -154,6 +154,9 @@ class BitrixTaskHandler:
             user_fields = self._extract_user_fields(metadata)
             task_data.update(user_fields)
             
+            # Явное добавление поля для связи с Camunda External Task
+            task_data['UF_CAMUNDA_ID_EXTERNAL_TASK'] = task_id
+            
             # Подготовка данных для отправки
             payload = {'fields': task_data}
             

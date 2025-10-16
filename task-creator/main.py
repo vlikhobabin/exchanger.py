@@ -10,6 +10,7 @@ from loguru import logger
 
 from config import worker_config, rabbitmq_config, systems_config
 from message_processor import MessageProcessor
+from instance_lock import InstanceLock
 
 
 def setup_logging():
@@ -92,14 +93,18 @@ def main():
         active_queues = systems_config.get_active_queues()
         logger.info(f"Активных интеграций: {len(active_queues)}")
         
-        # Создание и запуск обработчика сообщений
-        processor = MessageProcessor()
-        
-        logger.info("Запуск Universal RabbitMQ Worker...")
-        logger.info("Нажмите Ctrl+C для завершения")
-        
-        # Запуск основного цикла
-        success = processor.start()
+        # Проверка и захват файловой блокировки для предотвращения наложения инстансов
+        with InstanceLock() as instance_lock:
+            logger.info("Файловая блокировка захвачена успешно")
+            
+            # Создание и запуск обработчика сообщений
+            processor = MessageProcessor()
+            
+            logger.info("Запуск Universal RabbitMQ Worker...")
+            logger.info("Нажмите Ctrl+C для завершения")
+            
+            # Запуск основного цикла
+            success = processor.start()
         
         if success:
             logger.info("Universal RabbitMQ Worker завершен успешно")

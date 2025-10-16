@@ -42,15 +42,37 @@ class BitrixTaskTracker:
                 return
             
             messages = self._get_messages_from_queue(self.source_queue)
-            if not messages: return
             
-            logger.info(f"Проверка {len(messages)} сообщений в очереди {self.source_queue}")
-            for message_info in messages:
-                try:
-                    self._process_message(message_info)
-                except Exception as e:
-                    logger.error(f"Критическая ошибка обработки сообщения {message_info.get('delivery_tag', 'unknown')}: {e}")
-                    self.stats["failed_checks"] += 1
+            # Логируем только при изменениях в количестве сообщений или для heartbeat (раз в 5 минут)
+            current_time = time.time()
+            should_log_heartbeat = (
+                not hasattr(self, '_last_heartbeat_log') or 
+                (current_time - self._last_heartbeat_log) >= 300
+            )
+            
+            # Проверяем, изменилось ли количество сообщений
+            current_message_count = len(messages) if messages else 0
+            last_message_count = getattr(self, '_last_message_count', 0)
+            message_count_changed = current_message_count != last_message_count
+            self._last_message_count = current_message_count
+            
+            if messages:
+                # Логируем только при изменении количества сообщений или для heartbeat
+                if message_count_changed or should_log_heartbeat:
+                    logger.info(f"Проверка {len(messages)} сообщений в очереди {self.source_queue}")
+                    if should_log_heartbeat:
+                        self._last_heartbeat_log = current_time
+                
+                for message_info in messages:
+                    try:
+                        self._process_message(message_info)
+                    except Exception as e:
+                        logger.error(f"Критическая ошибка обработки сообщения {message_info.get('delivery_tag', 'unknown')}: {e}")
+                        self.stats["failed_checks"] += 1
+            elif should_log_heartbeat:
+                logger.debug(f"Tracker heartbeat: очередь {self.source_queue} пуста")
+                self._last_heartbeat_log = current_time
+                
         except Exception as e:
             logger.error(f"Ошибка при проверке задач в очереди: {e}")
             self.stats["errors"].append(str(e))
