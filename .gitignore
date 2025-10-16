@@ -232,6 +232,10 @@ task-creator.py/*.log
 task-tracker.py/logs/
 task-tracker.py/*.log
 
+# Services Management logs (большие файлы логов)
+servieces-management/*.txt
+servieces-management/*.log
+
 # ============================================================================
 # Development и Testing
 # ============================================================================
