@@ -27,7 +27,8 @@ python queue_reader.py errors.camunda_tasks.queue --output errors_backup.json
 python queue_reader.py bitrix24.queue --clear
 
 # Принудительная очистка очереди без подтверждения
-python queue_reader.py bitrix24.queue --clear --force
+python queue_reader.py bitrix24.sent.queue --clear --force
+python '/opt/exchanger.py/camunda-worker/tools/queue_reader.py' bitrix24.sent.queue --clear --force
 
 # Очистка очереди ошибок
 python queue_reader.py errors.camunda_tasks.queue --clear --force

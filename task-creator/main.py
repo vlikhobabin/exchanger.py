@@ -34,12 +34,9 @@ def setup_logging():
         colorize=True
     )
     
-    # Создание директории для логов
-    os.makedirs("logs", exist_ok=True)
-    
     # Файловый вывод
     logger.add(
-        "logs/worker.log",
+        "/opt/exchanger.py/logs/exchanger-task-creator.log",
         format=log_format,
         level=worker_config.log_level,
         rotation="100 MB",
@@ -50,7 +47,7 @@ def setup_logging():
     
     # Файл ошибок
     logger.add(
-        "logs/worker_errors.log",
+        "/opt/exchanger.py/logs/exchanger-task-creator-errors.log",
         format=log_format,
         level="ERROR",
         rotation="50 MB",

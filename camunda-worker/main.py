@@ -37,7 +37,7 @@ def setup_logging():
     
     # Файловый вывод
     logger.add(
-        "logs/camunda_worker.log",
+        "/opt/exchanger.py/logs/camunda-worker.log",
         format=log_format,
         level=worker_config.log_level,
         rotation="100 MB",
@@ -48,7 +48,7 @@ def setup_logging():
     
     # Файл ошибок
     logger.add(
-        "logs/camunda_worker_errors.log",
+        "/opt/exchanger.py/logs/camunda-worker-errors.log",
         format=log_format,
         level="ERROR",
         rotation="50 MB",
