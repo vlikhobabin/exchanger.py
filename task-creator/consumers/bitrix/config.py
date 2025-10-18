@@ -21,12 +21,12 @@ class BitrixConfig(BaseSettings):
     
     roles_cache_ttl: int = Field(default=3600, env="BITRIX_ROLES_CACHE_TTL")
     
-    # НОВОЕ ПОЛЕ: Маппинг для значений списка "Ответ по результату"
+    # Маппинг для значений списка "Ответ по результату" (заполняется динамически)
     # Формат: "ID значения в Битрикс24": "Текстовое представление"
-    uf_result_answer_mapping: Dict[str, str] = Field(default={
-        "26": "ДА",
-        "27": "НЕТ"
-    })
+    uf_result_answer_mapping: Dict[str, str] = Field(default={})
+    
+    # Путь к кеш-файлу для пользовательских полей
+    uf_cache_file: str = Field(default=".uf_result_answer_cache.json")
     
     class Config:
         env_prefix = "BITRIX_"

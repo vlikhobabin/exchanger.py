@@ -292,4 +292,7 @@ metrics/
 
 # Performance data
 *.prof
-*.pstats 
+*.pstats
+
+# User field cache files
+.uf_result_answer_cache.json 
