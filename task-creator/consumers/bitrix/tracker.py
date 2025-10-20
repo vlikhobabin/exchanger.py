@@ -91,7 +91,7 @@ class BitrixTaskTracker:
         Синхронизация пользовательских полей при инициализации трекера.
         
         Получает актуальные значения поля UF_RESULT_ANSWER из Bitrix24 API
-        или загружает из кеш-файла при недоступности API.
+        и обновляет кеш при успешной синхронизации.
         """
         try:
             from .userfield_sync import BitrixUserFieldSync
@@ -99,27 +99,24 @@ class BitrixTaskTracker:
             # Создаем экземпляр синхронизатора
             uf_sync = BitrixUserFieldSync(self.config)
             
-            # Выполняем синхронизацию
-            updated_mapping = uf_sync.sync_mapping()
-            
-            if updated_mapping:
-                # Обновляем маппинг в конфигурации
+            # sync_mapping() теперь возвращает bool
+            if uf_sync.sync_mapping():
+                # Успешная синхронизация - загружаем маппинг из кеша
+                updated_mapping = uf_sync.get_mapping()
                 self.config.uf_result_answer_mapping = updated_mapping
                 logger.info(f"✅ UF_RESULT_ANSWER маппинг обновлен: {updated_mapping}")
             else:
-                logger.warning("⚠️ Не удалось обновить маппинг UF_RESULT_ANSWER, используются значения по умолчанию")
-                if not self.config.uf_result_answer_mapping:
-                    # Устанавливаем fallback значения если маппинг пустой
-                    self.config.uf_result_answer_mapping = {
-                        "26": "ДА",
-                        "27": "НЕТ"
-                    }
-                    logger.info(f"Установлены fallback значения: {self.config.uf_result_answer_mapping}")
+                # Не удалось синхронизировать - кеш инвалидирован
+                logger.error("❌ Не удалось синхронизировать маппинг UF_RESULT_ANSWER из API")
+                # Устанавливаем пустой маппинг
+                self.config.uf_result_answer_mapping = {}
                     
         except ImportError as e:
             logger.error(f"Ошибка импорта модуля синхронизации пользовательских полей: {e}")
+            self.config.uf_result_answer_mapping = {}
         except Exception as e:
             logger.error(f"Неожиданная ошибка при синхронизации пользовательских полей: {e}")
+            self.config.uf_result_answer_mapping = {}
     
     def _check_tasks_in_queue(self):
         """

@@ -31,93 +31,85 @@ class BitrixUserFieldSync:
         """
         self.config = config
         self.cache_file = Path(__file__).parent / '.uf_result_answer_cache.json'
-        self.api_url = f"{self.config.webhook_url}/user.userfield.list.json"
+        
+        # Формируем URL для кастомного API endpoint
+        # Убираем стандартный webhook путь и добавляем прямой путь к API
+        base_url = self.config.webhook_url.split('/rest/')[0]
+        self.api_url = f"{base_url}/local/modules/imena.camunda/lib/UserFields/userfields_api.php"
         
         logger.debug(f"BitrixUserFieldSync инициализирован, кеш-файл: {self.cache_file}")
+        logger.debug(f"API URL: {self.api_url}")
     
     def fetch_uf_result_answer_values(self) -> Optional[Dict[str, Any]]:
         """
-        Запрос к API Bitrix24 для получения значений поля UF_RESULT_ANSWER.
+        Запрос к кастомному API Bitrix24 для получения значений поля UF_RESULT_ANSWER.
         
         Returns:
             Dict с данными поля или None при ошибке
         """
         try:
-            # Параметры запроса для получения пользовательского поля
-            params = {
-                'filter': {
-                    'ENTITY_ID': 'TASKS_TASK',
-                    'FIELD_NAME': 'UF_RESULT_ANSWER'
-                }
-            }
+            logger.debug(f"Попытка запроса к кастомному API: {self.api_url}")
             
-            logger.debug(f"Запрос к API Bitrix24: {self.api_url}")
-            logger.debug(f"Параметры: {params}")
-            
-            # Выполняем запрос к API
-            response = requests.post(
-                self.api_url,
-                json=params,
-                headers={'Content-Type': 'application/json'},
-                timeout=self.config.request_timeout
-            )
+            url = f"{self.api_url}?api=1&method=list"
+            response = requests.get(url, timeout=self.config.request_timeout)
             
             # Проверяем статус ответа
             response.raise_for_status()
             result = response.json()
             
-            # Проверяем наличие ошибок в ответе
-            if result.get('error'):
-                logger.error(f"Ошибка API Bitrix24: {result['error']}")
-                logger.error(f"Описание ошибки: {result.get('error_description', 'Не указано')}")
+            # Проверяем статус ответа API
+            if result.get('status') != 'success':
+                logger.debug(f"API вернул ошибку: {result.get('error', 'Unknown error')}")
                 return None
             
-            # Проверяем наличие данных
-            api_result = result.get('result', [])
-            if not api_result:
-                logger.warning("Поле UF_RESULT_ANSWER не найдено в Bitrix24")
-                return None
+            # Проверяем наличие данных в API
+            api_data = result.get('data', {})
+            user_fields = api_data.get('userFields', [])
             
-            logger.info(f"Успешно получены данные поля UF_RESULT_ANSWER из API")
-            return api_result[0]  # Возвращаем первое (и единственное) поле
+            # Ищем поле UF_RESULT_ANSWER
+            for field in user_fields:
+                if field.get('FIELD_NAME') == 'UF_RESULT_ANSWER':
+                    logger.info(f"✅ Найдено поле UF_RESULT_ANSWER в кастомном API")
+                    return field
             
+            logger.debug("Поле UF_RESULT_ANSWER не найдено в кастомном API")
+            return None
+                
         except requests.exceptions.RequestException as e:
-            logger.error(f"Ошибка запроса к API Bitrix24: {e}")
+            logger.debug(f"Ошибка запроса к кастомному API: {e}")
             return None
         except json.JSONDecodeError as e:
-            logger.error(f"Ошибка декодирования ответа от API Bitrix24: {e}")
+            logger.debug(f"Ошибка декодирования ответа от кастомного API: {e}")
             return None
         except Exception as e:
-            logger.error(f"Неожиданная ошибка при запросе к API Bitrix24: {e}")
+            logger.debug(f"Неожиданная ошибка при запросе к кастомному API: {e}")
             return None
     
     def parse_list_values(self, field_data: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
         """
-        Извлечение значений списка из данных поля.
+        Извлечение значений списка из данных поля кастомного API.
         
         Args:
-            field_data: Данные поля из API Bitrix24
+            field_data: Данные поля из кастомного API Bitrix24
             
         Returns:
             Список значений или None при ошибке
         """
         try:
-            # Извлекаем список значений из поля
-            list_values = field_data.get('LIST', [])
+            # Получаем enum значения из кастомного API
+            enum_values = field_data.get('ENUM_VALUES', [])
+            if enum_values:
+                logger.debug(f"Найдено {len(enum_values)} enum значений в кастомном API")
+                
+                for item in enum_values:
+                    item_id = item.get('ID', 'unknown')
+                    item_value = item.get('VALUE', 'unknown')
+                    logger.debug(f"Enum значение: ID={item_id}, VALUE={item_value}")
+                
+                return enum_values
             
-            if not list_values:
-                logger.warning("Список значений поля UF_RESULT_ANSWER пуст")
-                return None
-            
-            logger.debug(f"Найдено {len(list_values)} значений в списке поля UF_RESULT_ANSWER")
-            
-            # Логируем найденные значения для отладки
-            for item in list_values:
-                item_id = item.get('ID', 'unknown')
-                item_value = item.get('VALUE', 'unknown')
-                logger.debug(f"Значение списка: ID={item_id}, VALUE={item_value}")
-            
-            return list_values
+            logger.warning("Список значений поля UF_RESULT_ANSWER пуст")
+            return None
             
         except Exception as e:
             logger.error(f"Ошибка при парсинге значений списка: {e}")
@@ -151,10 +143,6 @@ class BitrixUserFieldSync:
                 logger.error("Не удалось создать маппинг - нет корректных значений")
                 return None
             
-            # Проверяем наличие ожидаемых значений
-            values = list(mapping.values())
-            if "ДА" not in values and "НЕТ" not in values:
-                logger.warning(f"Не найдены ожидаемые значения 'ДА'/'НЕТ' в списке: {values}")
             
             logger.info(f"Создан маппинг для {len(mapping)} значений: {mapping}")
             return mapping
@@ -225,22 +213,20 @@ class BitrixUserFieldSync:
             logger.error(f"Ошибка при загрузке из кеш-файла: {e}")
             return None
     
-    def sync_mapping(self) -> Optional[Dict[str, str]]:
+    def sync_mapping(self) -> bool:
         """
-        Основной метод синхронизации маппинга.
+        Синхронизация маппинга через API и обновление кеша.
         
-        Логика работы:
-        1. Попытка получить данные из API Bitrix24
-        2. При успехе: сохранить в кеш и вернуть маппинг
-        3. При ошибке: загрузить из кеш-файла
-        4. Если кеш отсутствует: вернуть None
+        Логика:
+        1. Получает данные из API Bitrix24
+        2. При успехе: сохраняет в кеш и возвращает True
+        3. При ошибке: инвалидирует кеш (очищает файл) и возвращает False
         
         Returns:
-            Словарь маппинга или None при ошибке
+            bool: True если синхронизация успешна, False при ошибке
         """
         logger.info("Начало синхронизации маппинга UF_RESULT_ANSWER")
         
-        # Шаг 1: Попытка получить данные из API
         try:
             field_data = self.fetch_uf_result_answer_values()
             if field_data:
@@ -251,23 +237,34 @@ class BitrixUserFieldSync:
                         # Сохраняем в кеш
                         if self.save_to_cache_file(mapping):
                             logger.info("✅ Маппинг успешно получен из API и сохранен в кеш")
-                            return mapping
+                            return True
                         else:
                             logger.warning("⚠️ Маппинг получен из API, но не удалось сохранить в кеш")
-                            return mapping
+                            return False
+            
+            logger.error("❌ Не удалось получить данные из API")
+            self.invalidate_cache()
+            return False
+            
         except Exception as e:
             logger.error(f"Ошибка при получении данных из API: {e}")
-        
-        # Шаг 2: При ошибке API - загружаем из кеша
-        logger.warning("API недоступен, попытка загрузки из кеш-файла")
+            self.invalidate_cache()
+            return False
+    def invalidate_cache(self) -> None:
+        """Инвалидирует кеш, удаляя кеш-файл."""
         try:
-            cached_mapping = self.load_from_cache_file()
-            if cached_mapping:
-                logger.info("✅ Маппинг загружен из кеш-файла")
-                return cached_mapping
+            if self.cache_file.exists():
+                self.cache_file.unlink()
+                logger.info(f"Кеш-файл инвалидирован: {self.cache_file}")
         except Exception as e:
-            logger.error(f"Ошибка при загрузке из кеш-файла: {e}")
+            logger.error(f"Ошибка при инвалидации кеш-файла: {e}")
+    
+    def get_mapping(self) -> Dict[str, str]:
+        """
+        Получает маппинг из кеша.
         
-        # Шаг 3: Если кеш недоступен - возвращаем None
-        logger.error("❌ Не удалось получить маппинг ни из API, ни из кеш-файла")
-        return None
+        Returns:
+            Dict[str, str]: Словарь маппинга или пустой словарь если кеш невалиден
+        """
+        cached_mapping = self.load_from_cache_file()
+        return cached_mapping if cached_mapping else {}
