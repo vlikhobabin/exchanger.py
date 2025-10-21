@@ -60,7 +60,7 @@ class BPMNMetadataCache:
             activity_id: ID активности в процессе
             
         Returns:
-            Словарь с метаданными активности
+            Словарь с метаданными активности, включая свойства уровня процесса
         """
         with self._lock:
             # Проверка кэша
@@ -70,9 +70,15 @@ class BPMNMetadataCache:
                 # Данные найдены в кэше
                 self.stats["cache_hits"] += 1
                 activity_metadata = cache_entry.get("activities", {}).get(activity_id, {})
+                process_properties = cache_entry.get("processProperties", {})
                 
                 logger.debug(f"Cache HIT: {process_definition_id}/{activity_id}")
-                return activity_metadata
+                
+                # Возвращаем метаданные активности с добавлением свойств процесса
+                return {
+                    **activity_metadata,  # метаданные активности
+                    "processProperties": process_properties
+                }
             
             # Данных нет в кэше - загружаем
             self.stats["cache_misses"] += 1
@@ -83,14 +89,20 @@ class BPMNMetadataCache:
             if not bpmn_xml:
                 return {}
             
-            # Парсинг всех активностей процесса
+            # Парсинг всех активностей процесса и свойств процесса
             parsed_metadata = self._parse_bpmn_metadata(bpmn_xml)
             
             # Сохранение в кэш
             self._save_to_cache(process_definition_id, bpmn_xml, parsed_metadata)
             
-            # Возврат метаданных конкретной активности
-            return parsed_metadata.get(activity_id, {})
+            # Возврат метаданных конкретной активности с добавлением свойств процесса
+            activity_metadata = parsed_metadata.get("activities", {}).get(activity_id, {})
+            process_properties = parsed_metadata.get("processProperties", {})
+            
+            return {
+                **activity_metadata,  # метаданные активности
+                "processProperties": process_properties
+            }
     
     def _get_from_cache(self, process_definition_id: str) -> Optional[Dict[str, Any]]:
         """Получение записи из кэша с проверкой TTL"""
@@ -137,10 +149,14 @@ class BPMNMetadataCache:
     
     def _parse_bpmn_metadata(self, bpmn_xml: str) -> Dict[str, Dict[str, Any]]:
         """
-        Парсинг BPMN XML для извлечения метаданных всех активностей
+        Парсинг BPMN XML для извлечения метаданных всех активностей и свойств уровня процесса
         
         Returns:
-            Словарь: activity_id -> metadata
+            Словарь с метаданными активностей и свойствами процесса:
+            {
+                "processProperties": {...},
+                "activities": {activity_id -> metadata}
+            }
         """
         try:
             self.stats["parse_operations"] += 1
@@ -151,6 +167,31 @@ class BPMNMetadataCache:
                 'bpmn': 'http://www.omg.org/spec/BPMN/20100524/MODEL',
                 'camunda': 'http://camunda.org/schema/1.0/bpmn'
             }
+            
+            # Извлечение свойств уровня процесса
+            process_properties = {}
+            processes = root.findall(".//bpmn:process", namespaces)
+            
+            for process in processes:
+                # Поиск extensionElements в процессе
+                extension_elements = process.find(".//bpmn:extensionElements", namespaces)
+                if extension_elements is not None:
+                    # Поиск camunda:properties
+                    properties = extension_elements.findall(".//camunda:properties", namespaces)
+                    for props_container in properties:
+                        # Поиск отдельных camunda:property
+                        prop_elements = props_container.findall(".//camunda:property", namespaces)
+                        for prop in prop_elements:
+                            name = prop.get('name')
+                            value = prop.get('value')
+                            if name and value:
+                                process_properties[name] = value
+                                logger.debug(f"Найдено свойство процесса: {name} = {value}")
+            
+            if process_properties:
+                logger.info(f"Извлечены свойства уровня процесса: {list(process_properties.keys())}")
+            else:
+                logger.debug("Свойства уровня процесса не найдены")
             
             activities_metadata = {}
             
@@ -225,13 +266,18 @@ class BPMNMetadataCache:
                 activities_metadata[activity_id] = activity_metadata
                 
             logger.info(f"Извлечены метаданные для {len(activities_metadata)} активностей")
-            return activities_metadata
+            
+            # Возвращаем структуру с processProperties и activities
+            return {
+                "processProperties": process_properties,
+                "activities": activities_metadata
+            }
             
         except Exception as e:
             logger.error(f"Ошибка парсинга BPMN XML: {e}")
             return {}
     
-    def _save_to_cache(self, process_definition_id: str, bpmn_xml: str, activities_metadata: Dict[str, Dict[str, Any]]):
+    def _save_to_cache(self, process_definition_id: str, bpmn_xml: str, parsed_metadata: Dict[str, Any]):
         """Сохранение данных в кэш с управлением размером"""
         current_time = time.time()
         
@@ -239,16 +285,23 @@ class BPMNMetadataCache:
         if len(self._cache) >= self.max_cache_size:
             self._cleanup_cache()
         
+        # Извлекаем данные из новой структуры
+        process_properties = parsed_metadata.get("processProperties", {})
+        activities_metadata = parsed_metadata.get("activities", {})
+        
         # Сохранение новой записи
         self._cache[process_definition_id] = {
             "bpmn_xml": bpmn_xml,
+            "processProperties": process_properties,
             "activities": activities_metadata,
             "cached_at": current_time,
             "last_accessed": current_time,
             "size_bytes": len(bpmn_xml)
         }
         
-        logger.info(f"Сохранен в кэш: {process_definition_id} ({len(activities_metadata)} активностей)")
+        activities_count = len(activities_metadata)
+        process_props_count = len(process_properties)
+        logger.info(f"Сохранен в кэш: {process_definition_id} ({activities_count} активностей, {process_props_count} свойств процесса)")
     
     def _cleanup_cache(self):
         """Очистка кэша по LRU стратегии"""

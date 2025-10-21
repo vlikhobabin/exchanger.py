@@ -171,8 +171,8 @@ class BitrixTaskHandler:
             
             # Извлечение данных проекта и постановщика из переменных процесса
             project_id = self._extract_project_id(variables)
-            # ВРЕМЕННО: постановщик всегда ID=1 (будет заменено на параметр из BPMN)
-            created_by_id = 1
+            # Извлечение originatorId из свойств уровня процесса
+            created_by_id = self._extract_originator_id(metadata)
             
             # Подготовка данных задачи для Bitrix24
             task_data = {
@@ -447,6 +447,37 @@ class BitrixTaskHandler:
             except (ValueError, TypeError):
                 logger.warning(f"Не удалось преобразовать projectId в число: {project_id}")
         return None
+    
+    def _extract_originator_id(self, metadata: Dict[str, Any]) -> int:
+        """
+        Извлечение ID постановщика (originatorId) из свойств уровня процесса
+        
+        Args:
+            metadata: Метаданные сообщения из RabbitMQ
+            
+        Returns:
+            ID пользователя Bitrix24 для поля CREATED_BY
+            
+        Raises:
+            ValueError: Если originatorId не указан или некорректен
+        """
+        # Получаем processProperties из метаданных
+        process_properties = metadata.get("processProperties", {})
+        
+        originator_id = process_properties.get("originatorId")
+        
+        if not originator_id:
+            # Fallback - используем ID=1 по умолчанию с предупреждением
+            logger.warning("originatorId не найден в processProperties, используется ID=1 по умолчанию")
+            return 1
+        
+        try:
+            originator_id_int = int(originator_id)
+            logger.debug(f"Используется originatorId={originator_id} как created_by_id={originator_id_int}")
+            return originator_id_int
+        except (ValueError, TypeError) as e:
+            logger.error(f"Некорректный originatorId={originator_id}: {e}, используется ID=1 по умолчанию")
+            return 1
     
     def _extract_created_by_id(self, variables: Dict[str, Any], metadata: Dict[str, Any] = None) -> int:
         """Извлечение ID постановщика задачи (CREATED_BY) из переменных процесса"""
