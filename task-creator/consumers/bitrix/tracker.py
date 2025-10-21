@@ -20,6 +20,7 @@ BitrixTaskTracker - Модуль для отслеживания задач в B
 import json
 import requests
 import time
+import pika
 from typing import Dict, Any, Optional, List
 from loguru import logger
 from .config import bitrix_config
@@ -268,15 +269,21 @@ class BitrixTaskTracker:
                 # Обновляем данные сообщения с актуальной информацией о задаче
                 updated_message = self._update_response_data(message_info["message_data"], task_info)
                 
-                # Перемещаем в целевую очередь
-                if self._move_to_responses_queue(updated_message):
-                    # Успешно перемещено - подтверждаем сообщение
-                    self.consumer.channel.basic_ack(delivery_tag=delivery_tag)
+                # КРИТИЧНО: ACK ПЕРЕД отправкой в responses.queue
+                # Это безопасно, т.к. responses.queue имеет durable=True
+                self.consumer.channel.basic_ack(delivery_tag=delivery_tag)
+                logger.debug(f"Сообщение {delivery_tag} подтверждено перед отправкой в responses.queue")
+                
+                # Теперь отправляем с retry
+                if self._move_to_responses_queue_with_retry(updated_message, max_attempts=5):
                     self.stats["completed_tasks"] += 1
                     self.stats["moved_to_responses"] += 1
+                    logger.info(f"Задача {task_id} успешно перемещена в responses.queue")
                 else:
-                    # Ошибка перемещения - отклоняем сообщение
-                    self.consumer.channel.basic_nack(delivery_tag=delivery_tag, requeue=True)
+                    # Если все попытки провалились - логируем критическую ошибку
+                    logger.critical(f"FAILED to move task {task_id} to responses after ACK!")
+                    # Отправляем в dead letter queue для ручной обработки
+                    self._send_to_dead_letter(updated_message)
             else:
                 # Задача не завершена - возвращаем в очередь для повторной проверки
                 self.consumer.channel.basic_nack(delivery_tag=delivery_tag, requeue=True)
@@ -448,6 +455,91 @@ class BitrixTaskTracker:
             "errors_count": len(self.stats["errors"]),
             "recent_errors": self.stats["errors"][-5:]
         }
+    
+    def _move_to_responses_queue_with_retry(self, message_data: Dict[str, Any], max_attempts: int = 5) -> bool:
+        """
+        Перемещение сообщения в responses.queue с retry
+        
+        Args:
+            message_data: Данные сообщения для отправки
+            max_attempts: Максимальное количество попыток
+            
+        Returns:
+            True если сообщение успешно отправлено, False иначе
+        """
+        task_id = message_data.get('original_message', {}).get('task_id', 'unknown')
+        
+        for attempt in range(max_attempts):
+            try:
+                logger.debug(f"Попытка {attempt + 1}/{max_attempts} отправки задачи {task_id} в responses.queue")
+                
+                if self._move_to_responses_queue(message_data):
+                    logger.info(f"Задача {task_id} успешно отправлена в responses.queue (попытка {attempt + 1})")
+                    return True
+                
+                # Если не последняя попытка - ждем перед повтором
+                if attempt < max_attempts - 1:
+                    wait_time = 2 ** attempt  # 1, 2, 4, 8, 16 секунд
+                    logger.warning(f"Попытка {attempt + 1} отправки задачи {task_id} не удалась, повтор через {wait_time}s")
+                    time.sleep(wait_time)
+                
+            except Exception as e:
+                logger.error(f"Ошибка попытки {attempt + 1} отправки задачи {task_id} в responses.queue: {e}")
+                
+                # Если не последняя попытка - ждем перед повтором
+                if attempt < max_attempts - 1:
+                    wait_time = 2 ** attempt
+                    logger.warning(f"Ошибка попытки {attempt + 1}, повтор через {wait_time}s")
+                    time.sleep(wait_time)
+                else:
+                    logger.error(f"Все {max_attempts} попыток отправки задачи {task_id} в responses.queue провалились")
+        
+        return False
+    
+    def _send_to_dead_letter(self, message_data: Dict[str, Any]) -> bool:
+        """
+        Отправка сообщения в dead letter queue для ручной обработки
+        
+        Args:
+            message_data: Данные сообщения для отправки
+            
+        Returns:
+            True если сообщение успешно отправлено, False иначе
+        """
+        try:
+            task_id = message_data.get('original_message', {}).get('task_id', 'unknown')
+            logger.critical(f"Отправка задачи {task_id} в dead letter queue для ручной обработки")
+            
+            # Подключаемся к RabbitMQ если нет соединения
+            if not self.publisher.is_connected():
+                if not self.publisher.connect():
+                    logger.error("Не удалось подключиться к RabbitMQ для отправки в dead letter queue")
+                    return False
+            
+            # Отправляем в dead letter queue
+            # Используем exchange для dead letter (если настроен) или обычную очередь
+            dead_letter_queue = "bitrix24.dead_letter.queue"
+            
+            message_json = json.dumps(message_data, ensure_ascii=False)
+            
+            self.publisher.channel.queue_declare(queue=dead_letter_queue, durable=True)
+            self.publisher.channel.basic_publish(
+                exchange='',
+                routing_key=dead_letter_queue,
+                body=message_json.encode('utf-8'),
+                properties=pika.BasicProperties(
+                    delivery_mode=2,  # Persistent message
+                    content_type='application/json',
+                    timestamp=int(time.time())
+                )
+            )
+            
+            logger.critical(f"Задача {task_id} отправлена в dead letter queue: {dead_letter_queue}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Ошибка отправки задачи в dead letter queue: {e}")
+            return False
     
     def cleanup(self):
         """

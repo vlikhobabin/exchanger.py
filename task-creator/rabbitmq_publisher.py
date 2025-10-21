@@ -25,6 +25,14 @@ class RabbitMQPublisher:
             "last_message_time": None
         }
     
+    def _handle_connection_error(self, error) -> bool:
+        """Обработка ошибок соединения с автоматическим переподключением"""
+        error_str = str(error)
+        if "Connection reset by peer" in error_str or "IndexError" in error_str or "pop from an empty deque" in error_str:
+            logger.warning(f"Обнаружена ошибка соединения: {error_str}, переподключаемся...")
+            return self.connect()
+        return False
+
     def connect(self) -> bool:
         """Подключение к RabbitMQ"""
         try:
@@ -107,6 +115,23 @@ class RabbitMQPublisher:
         except Exception as e:
             self.stats["failed_messages"] += 1
             logger.error(f"Ошибка отправки сообщения в очередь {queue_name}: {e}")
+            # Попытка автоматического переподключения при ошибках соединения
+            if self._handle_connection_error(e):
+                # Повторная попытка отправки после переподключения
+                try:
+                    self.channel.queue_declare(queue=queue_name, durable=True)
+                    self.channel.basic_publish(
+                        exchange=exchange,
+                        routing_key=queue_name,
+                        body=message_json.encode('utf-8'),
+                        properties=properties
+                    )
+                    self.stats["sent_messages"] += 1
+                    self.stats["failed_messages"] -= 1  # Отменяем предыдущий счетчик ошибок
+                    logger.info(f"Сообщение успешно отправлено в очередь {queue_name} после переподключения")
+                    return True
+                except Exception as retry_error:
+                    logger.error(f"Ошибка повторной отправки сообщения в очередь {queue_name}: {retry_error}")
             return False
     
     def publish_success_message(self, original_queue: str, original_message: Dict[str, Any], 

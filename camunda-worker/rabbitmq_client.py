@@ -185,6 +185,30 @@ class RabbitMQClient:
             
         except Exception as e:
             logger.error(f"Ошибка публикации задачи {topic}: {e}")
+            # Попытка автоматического переподключения при ошибках соединения
+            if self._handle_connection_error(e):
+                # Повторная попытка публикации после переподключения
+                try:
+                    self.channel.basic_publish(
+                        exchange=self.config.tasks_exchange_name,
+                        routing_key=routing_key,
+                        body=json.dumps(message, ensure_ascii=False),
+                        properties=pika.BasicProperties(
+                            delivery_mode=2,
+                            timestamp=int(time.time()),
+                            content_type='application/json',
+                            headers={
+                                'camunda_topic': topic,
+                                'target_system': system,
+                                'task_id': task_data.get("id"),
+                                'process_instance_id': task_data.get("processInstanceId")
+                            }
+                        )
+                    )
+                    logger.info(f"Задача успешно опубликована после переподключения: {topic}")
+                    return True
+                except Exception as retry_error:
+                    logger.error(f"Ошибка повторной публикации задачи {topic}: {retry_error}")
             return False
     
     def publish_error(self, topic: str, task_id: str, error_message: str) -> bool:
@@ -217,6 +241,23 @@ class RabbitMQClient:
             
         except Exception as e:
             logger.error(f"Ошибка публикации ошибки: {e}")
+            # Попытка автоматического переподключения при ошибках соединения
+            if self._handle_connection_error(e):
+                # Повторная попытка публикации после переподключения
+                try:
+                    self.channel.basic_publish(
+                        exchange=self.config.tasks_exchange_name,
+                        routing_key="errors.camunda_tasks",
+                        body=json.dumps(error_data, ensure_ascii=False),
+                        properties=pika.BasicProperties(
+                            delivery_mode=2,
+                            content_type='application/json'
+                        )
+                    )
+                    logger.info(f"Ошибка задачи успешно опубликована после переподключения: {task_id}")
+                    return True
+                except Exception as retry_error:
+                    logger.error(f"Ошибка повторной публикации ошибки: {retry_error}")
             return False
     
     def is_connected(self) -> bool:
@@ -230,6 +271,14 @@ class RabbitMQClient:
             )
         except:
             return False
+    
+    def _handle_connection_error(self, error) -> bool:
+        """Обработка ошибок соединения с автоматическим переподключением"""
+        error_str = str(error)
+        if "Connection reset by peer" in error_str or "IndexError" in error_str or "pop from an empty deque" in error_str:
+            logger.warning(f"Обнаружена ошибка соединения: {error_str}, переподключаемся...")
+            return self.reconnect()
+        return False
     
     def reconnect(self) -> bool:
         """Переподключение к RabbitMQ"""

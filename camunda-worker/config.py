@@ -55,6 +55,8 @@ class RabbitMQConfig(BaseSettings):
     username: str = Field(default="guest", env="RABBITMQ_USERNAME")
     password: str = Field(default="guest", env="RABBITMQ_PASSWORD")
     virtual_host: str = Field(default="/", env="RABBITMQ_VIRTUAL_HOST")
+    heartbeat: int = Field(default=600, env="RABBITMQ_HEARTBEAT")
+    blocked_connection_timeout: int = Field(default=300, env="RABBITMQ_BLOCKED_CONNECTION_TIMEOUT")
     
     # Exchange для исходящих задач
     tasks_exchange_name: str = Field(default="camunda.external.tasks", env="RABBITMQ_TASKS_EXCHANGE")

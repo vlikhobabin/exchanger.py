@@ -19,7 +19,6 @@ class BitrixConfig(BaseSettings):
     request_timeout: int = Field(default=30, env="BITRIX_REQUEST_TIMEOUT")
     max_description_length: int = Field(default=10000, env="BITRIX_MAX_DESCRIPTION_LENGTH")
     
-    roles_cache_ttl: int = Field(default=3600, env="BITRIX_ROLES_CACHE_TTL")
     
     # Маппинг для значений списка "Ответ по результату" (заполняется динамически)
     # Формат: "ID значения в Битрикс24": "Текстовое представление"
@@ -56,5 +55,4 @@ SUPPORTED_TOPICS: List[str] = [
 
 bitrix_config = BitrixConfig()
 worker_config = WorkerConfig()
-roles_cache_ttl = bitrix_config.roles_cache_ttl
 roles_mapping_file = os.getenv('BITRIX_ROLES_MAPPING_FILE', 'roles_mapping.json')

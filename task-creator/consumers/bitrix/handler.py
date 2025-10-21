@@ -6,6 +6,7 @@ import os
 import json
 import time
 import yaml
+import pika
 from pathlib import Path
 from typing import Dict, Optional, Any, List
 from datetime import datetime, timedelta
@@ -21,15 +22,11 @@ class BitrixTaskHandler:
     def __init__(self):
         self.config = bitrix_config
         self.worker_config = worker_config
-        self.task_add_url = f"{self.config.webhook_url}/tasks.task.add.json"
+        self.task_add_url = f"{self.config.webhook_url.rstrip('/')}/tasks.task.add.json"
         
         # RabbitMQ Publisher для отправки успешных сообщений
         self.publisher = RabbitMQPublisher()
         
-        # Кеш соответствий ролей и пользователей
-        self._roles_cache = {}  # {assignee_id: responsible_id}
-        self._cache_timestamp = None
-        self._roles_mapping_file = Path(__file__).parent / 'roles_mapping.yaml'
         
         # Статистика
         self.stats = {
@@ -73,8 +70,8 @@ class BitrixTaskHandler:
                 task_id_bitrix = result.get('result', {}).get('task', {}).get('id')
                 logger.info(f"Задача успешно создана в Bitrix24: ID={task_id_bitrix}")
                 
-                # Отправка успешного результата в очередь bitrix24.sent.queue
-                success_sent = self._send_success_message(message_data, result, "bitrix24.queue")
+                # Отправка успешного результата в очередь bitrix24.sent.queue с retry
+                success_sent = self._send_success_message_with_retry(message_data, result, "bitrix24.queue")
                 if success_sent:
                     self.stats["sent_to_success_queue"] += 1
                 else:
@@ -85,9 +82,27 @@ class BitrixTaskHandler:
             else:
                 self.stats["failed_tasks"] += 1
                 error_msg = result.get('error_description', 'Unknown error') if result else 'No response'
+                
+                # Проверяем, является ли это ошибкой assigneeId
+                if result and result.get('error') == 'ASSIGNEE_ID_ERROR':
+                    logger.critical(f"КРИТИЧЕСКАЯ ОШИБКА assigneeId: {error_msg}")
+                    # Отправляем в очередь ошибок для ручного разбора
+                    self._send_to_error_queue(message_data, error_msg)
+                    # ВАЖНО: Возвращаем True чтобы сообщение было ACK'нуто и не обрабатывалось повторно
+                    return True
+                
                 logger.error(f"Ошибка создания задачи в Bitrix24: {error_msg}")
                 return False
                 
+        except ValueError as e:
+            # Критическая ошибка с assigneeId - отправляем в очередь ошибок
+            self.stats["failed_tasks"] += 1
+            logger.critical(f"КРИТИЧЕСКАЯ ОШИБКА assigneeId: {e}")
+            
+            # Отправляем в очередь ошибок для ручного разбора
+            self._send_to_error_queue(message_data, str(e))
+            return False
+            
         except Exception as e:
             self.stats["failed_tasks"] += 1
             logger.error(f"Критическая ошибка при обработке сообщения: {e}")
@@ -95,7 +110,18 @@ class BitrixTaskHandler:
     
     def _create_bitrix_task(self, message_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
-        Создание задачи в Bitrix24 на основе данных сообщения
+        Идемпотентное создание задачи в Bitrix24 на основе данных сообщения
+        
+        Логика:
+        1. Извлечь task_id (External Task ID) из message_data
+        2. Проверить существование задачи в Bitrix24 по UF_CAMUNDA_ID_EXTERNAL_TASK
+        3. Если задача существует:
+           - Логировать WARNING о повторной попытке создания
+           - Получить существующую задачу через tasks.task.get
+           - Вернуть её данные (как будто только что создали)
+        4. Если задачи нет:
+           - Создать новую задачу с UF_CAMUNDA_ID_EXTERNAL_TASK = task_id
+           - Вернуть результат создания
         
         Args:
             message_data: Данные сообщения из RabbitMQ
@@ -109,6 +135,24 @@ class BitrixTaskHandler:
             topic = message_data.get('topic', 'unknown')
             variables = message_data.get('variables', {})
             metadata = message_data.get('metadata', {})
+            
+            # Шаг 1: Проверка существования задачи по External Task ID
+            existing_task = self._find_task_by_external_id(task_id)
+            
+            if existing_task:
+                logger.warning(f"Задача с UF_CAMUNDA_ID_EXTERNAL_TASK={task_id} уже существует в Bitrix24 (ID: {existing_task['id']})")
+                logger.warning(f"Это повторная попытка создания. Возвращаем существующую задачу.")
+                
+                # Формируем ответ в том же формате, что и при создании
+                return {
+                    "result": {
+                        "task": existing_task
+                    },
+                    "time": {
+                        "start": int(time.time()),
+                        "finish": int(time.time())
+                    }
+                }
             
             # Формирование заголовка задачи
             title = self._extract_title(variables, metadata, topic)
@@ -127,7 +171,8 @@ class BitrixTaskHandler:
             
             # Извлечение данных проекта и постановщика из переменных процесса
             project_id = self._extract_project_id(variables)
-            created_by_id = self._extract_created_by_id(variables)
+            # ВРЕМЕННО: постановщик всегда ID=1 (будет заменено на параметр из BPMN)
+            created_by_id = 1
             
             # Подготовка данных задачи для Bitrix24
             task_data = {
@@ -138,9 +183,9 @@ class BitrixTaskHandler:
                 'CREATED_BY': created_by_id,
             }
             
-            # Добавление GROUP_ID если указан projectId
-            if project_id:
-                task_data['GROUP_ID'] = project_id
+            # Добавление GROUP_ID если указан projectId (пока отключено для тестирования)
+            # if project_id:
+            #     task_data['GROUP_ID'] = project_id
             
             # Добавление дедлайна если указан
             if deadline:
@@ -161,6 +206,8 @@ class BitrixTaskHandler:
             payload = {'fields': task_data}
             
             logger.debug(f"Отправка задачи в Bitrix24: {json.dumps(payload, ensure_ascii=False, indent=2)}")
+            logger.info(f"URL запроса: {self.task_add_url}")
+            logger.info(f"Данные задачи: {json.dumps(task_data, ensure_ascii=False, indent=2)}")
             
             # Отправка POST запроса
             response = requests.post(
@@ -172,6 +219,9 @@ class BitrixTaskHandler:
             
             # Проверка статуса ответа
             response.raise_for_status()
+            
+            # Логирование ответа от Bitrix24
+            logger.info(f"Ответ от Bitrix24: {response.text}")
             
             # Возврат результата
             result = response.json()
@@ -211,6 +261,25 @@ class BitrixTaskHandler:
                 'error_description': f'Ошибка запроса: {str(e)}'
             }
             logger.error(f"Ошибка при отправке запроса в Bitrix24: {e}")
+            
+            # Если это HTTP ошибка, попробуем получить детали ответа
+            if hasattr(e, 'response') and e.response is not None:
+                try:
+                    error_details = e.response.text
+                    logger.error(f"Детали ошибки от Bitrix24: {error_details}")
+                    
+                    # Проверяем, является ли ошибка связанной с неверным пользователем
+                    if "не найден" in error_details and ("Исполнитель" in error_details or "Ответственный" in error_details):
+                        logger.critical(f"КРИТИЧЕСКАЯ ОШИБКА: Пользователь assigneeId не найден в Bitrix24")
+                        # Возвращаем специальный результат с ошибкой для обработки в process_message
+                        return {
+                            'error': 'ASSIGNEE_ID_ERROR',
+                            'error_description': f'Пользователь assigneeId не найден в Bitrix24: {error_details}'
+                        }
+                        
+                except:
+                    pass
+            
             return error_result
             
         except json.JSONDecodeError as e:
@@ -288,98 +357,28 @@ class BitrixTaskHandler:
     
     def _get_responsible_id_by_assignee(self, assignee_id: str) -> int:
         """
-        Получение ID пользователя Bitrix24 по ID роли из Camunda
-        Использует только JSON файл с соответствиями ролей
+        Получение ID пользователя Bitrix24 по ID из BPMN
+        Прямое использование assigneeId как responsible_id
         
         Args:
-            assignee_id: ID роли из Camunda
+            assignee_id: ID пользователя из BPMN extensionProperties
             
         Returns:
             ID пользователя Bitrix24
+            
+        Raises:
+            ValueError: Если assigneeId не указан или некорректен
         """
         if not assignee_id:
-            logger.warning("assignee_id не указан, используется default_responsible_id")
-            return self.config.default_responsible_id
+            raise ValueError("assigneeId не указан в BPMN - невозможно определить ответственного")
         
-        # Проверяем кеш
-        if not self._is_cache_valid():
-            logger.info("Кеш соответствий ролей устарел или пуст, загружаем из файла...")
-            if not self._load_roles_from_file():
-                logger.error("Не удалось загрузить соответствия ролей из файла, используется default_responsible_id")
-                return self.config.default_responsible_id
-        
-        # Ищем соответствие в кеше
-        responsible_id = self._roles_cache.get(assignee_id)
-        if responsible_id:
-            logger.debug(f"Найдено соответствие: assignee_id={assignee_id} -> responsible_id={responsible_id}")
-            return int(responsible_id)
-        
-        # Если соответствие не найдено
-        logger.warning(f"Соответствие для assignee_id={assignee_id} не найдено, используется default_responsible_id")
-        return self.config.default_responsible_id
-    
-    def _load_roles_from_file(self) -> bool:
-        """
-        Загрузка соответствий ролей из YAML файла
-        
-        Returns:
-            True если загрузка успешна, False иначе
-        """
         try:
-            if self._roles_mapping_file.exists():
-                with open(self._roles_mapping_file, 'r', encoding='utf-8') as f:
-                    data = yaml.safe_load(f)
-                    
-                    if not data or 'mappings' not in data:
-                        logger.error(f"Неверный формат файла соответствий ролей: отсутствует секция 'mappings'")
-                        return False
-                    
-                    # Извлекаем маппинги и создаем простой словарь для кеша
-                    mappings = data['mappings']
-                    roles_mapping = {}
-                    
-                    for assignee_id, role_info in mappings.items():
-                        if isinstance(role_info, dict):
-                            bitrix_id = role_info.get('bitrix_responsible_id')
-                            
-                            # Пропускаем записи без ID или с null
-                            if bitrix_id is not None and bitrix_id != 'null':
-                                roles_mapping[str(assignee_id)] = str(bitrix_id)
-                                
-                                assignee_name = role_info.get('assignee_name', 'Unknown')
-                                logger.debug(f"Загружена роль: {assignee_name} ({assignee_id}) → {bitrix_id}")
-                            else:
-                                assignee_name = role_info.get('assignee_name', 'Unknown')
-                                logger.warning(f"Пропущена роль без ID: {assignee_name} ({assignee_id})")
-                    
-                    # Обновляем кеш
-                    self._roles_cache = roles_mapping
-                    self._cache_timestamp = datetime.now()
-                    
-                    # Логирование результатов загрузки
-                    diagram_info = data.get('diagram', {})
-                    diagram_name = diagram_info.get('name', 'Unknown')
-                    diagram_id = diagram_info.get('id', 'Unknown')
-                    
-                    logger.info(f"Загружено {len(roles_mapping)} соответствий ролей из файла {self._roles_mapping_file}")
-                    logger.info(f"Диаграмма: {diagram_name} ({diagram_id})")
-                    
-                    if roles_mapping:
-                        logger.debug(f"Активные соответствия: {roles_mapping}")
-                    else:
-                        logger.warning("Нет активных соответствий ролей - все записи имеют null в bitrix_responsible_id")
-                    
-                    return True
-            else:
-                logger.error(f"Файл соответствий ролей {self._roles_mapping_file} не найден")
-                return False
-                
-        except yaml.YAMLError as e:
-            logger.error(f"Ошибка парсинга YAML файла соответствий: {e}")
-            return False
-        except Exception as e:
-            logger.error(f"Ошибка загрузки соответствий из файла: {e}")
-            return False
+            responsible_id = int(assignee_id)
+            logger.debug(f"Используется assigneeId={assignee_id} как responsible_id={responsible_id}")
+            return responsible_id
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"Некорректный assigneeId={assignee_id}: {e}")
+    
     
 
     
@@ -387,32 +386,7 @@ class BitrixTaskHandler:
     
 
     
-    def _is_cache_valid(self) -> bool:
-        """
-        Проверка валидности кеша соответствий ролей
-        
-        Returns:
-            True если кеш валиден, False иначе
-        """
-        if not self._cache_timestamp or not self._roles_cache:
-            return False
-        
-        # Проверяем время жизни кеша
-        cache_age = datetime.now() - self._cache_timestamp
-        ttl_seconds = timedelta(seconds=self.config.roles_cache_ttl)
-        
-        return cache_age < ttl_seconds
     
-    def refresh_roles_cache(self) -> bool:
-        """
-        Принудительное обновление кеша соответствий ролей
-        Метод для диагностики и ручного обновления
-        
-        Returns:
-            True если кеш успешно обновлен, False иначе
-        """
-        logger.info("Принудительное обновление кеша соответствий ролей из файла")
-        return self._load_roles_from_file()
     
     def _extract_priority(self, variables: Dict[str, Any], metadata: Dict[str, Any]) -> int:
         """Извлечение приоритета задачи"""
@@ -464,23 +438,27 @@ class BitrixTaskHandler:
         """Извлечение ID проекта (GROUP_ID) из переменных процесса"""
         project_id = variables.get('projectId')
         if project_id:
+            # Обработка как объекта Camunda {value, type} или простого значения
+            if isinstance(project_id, dict) and 'value' in project_id:
+                project_id = project_id['value']
+            
             try:
                 return int(project_id)
             except (ValueError, TypeError):
                 logger.warning(f"Не удалось преобразовать projectId в число: {project_id}")
         return None
     
-    def _extract_created_by_id(self, variables: Dict[str, Any]) -> int:
+    def _extract_created_by_id(self, variables: Dict[str, Any], metadata: Dict[str, Any] = None) -> int:
         """Извлечение ID постановщика задачи (CREATED_BY) из переменных процесса"""
         project_manager_id = variables.get('projectManagerId')
         if project_manager_id:
             try:
                 return int(project_manager_id)
             except (ValueError, TypeError):
-                logger.warning(f"Не удалось преобразовать projectManagerId в число: {project_manager_id}, используется responsible_id")
+                logger.warning(f"Не удалось преобразовать projectManagerId в число: {project_manager_id}, используется assigneeId")
         
-        # Fallback - используем responsible_id если projectManagerId не найден или некорректен
-        assignee_id = self._extract_assignee_id(variables, {})
+        # Fallback - используем assigneeId если projectManagerId не найден или некорректен
+        assignee_id = self._extract_assignee_id(variables, metadata or {})
         return self._get_responsible_id_by_assignee(assignee_id)
     
     def _extract_additional_fields(self, variables: Dict[str, Any], metadata: Dict[str, Any]) -> Dict[str, Any]:
@@ -1183,6 +1161,108 @@ class BitrixTaskHandler:
             logger.error(f"Ошибка при отправке успешного сообщения: {e}")
             return False
     
+    def _send_to_error_queue(self, message_data: Dict[str, Any], error_message: str) -> bool:
+        """
+        Отправка сообщения в очередь ошибок для ручного разбора
+        
+        Args:
+            message_data: Исходное сообщение из RabbitMQ
+            error_message: Описание ошибки
+            
+        Returns:
+            True если сообщение успешно отправлено, False иначе
+        """
+        try:
+            task_id = message_data.get('task_id', 'unknown')
+            logger.critical(f"Отправка задачи {task_id} в очередь ошибок: {error_message}")
+            
+            # Подготавливаем данные для очереди ошибок
+            error_data = {
+                "timestamp": int(time.time() * 1000),
+                "original_message": message_data,
+                "error_type": "ASSIGNEE_ID_ERROR",
+                "error_message": error_message,
+                "system": "bitrix24",
+                "requires_manual_intervention": True,
+                "suggested_action": "Проверить соответствие assigneeId в BPMN и пользователей в Bitrix24"
+            }
+            
+            # Отправляем в очередь ошибок
+            error_queue = "errors.camunda_tasks.queue"
+            message_json = json.dumps(error_data, ensure_ascii=False)
+            
+            # Подключаемся к RabbitMQ если нет соединения
+            if not self.publisher.is_connected():
+                if not self.publisher.connect():
+                    logger.error("Не удалось подключиться к RabbitMQ для отправки в очередь ошибок")
+                    return False
+            
+            # Создаем очередь ошибок (если не существует)
+            self.publisher.channel.queue_declare(queue=error_queue, durable=True)
+            
+            # Отправляем сообщение
+            self.publisher.channel.basic_publish(
+                exchange='',
+                routing_key=error_queue,
+                body=message_json.encode('utf-8'),
+                properties=pika.BasicProperties(
+                    delivery_mode=2,  # Persistent message
+                    content_type='application/json',
+                    timestamp=int(time.time())
+                )
+            )
+            
+            logger.critical(f"Задача {task_id} отправлена в очередь ошибок: {error_queue}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Ошибка отправки задачи в очередь ошибок: {e}")
+            return False
+
+    def _send_success_message_with_retry(self, original_message: Dict[str, Any], 
+                                        response_data: Dict[str, Any], original_queue: str, 
+                                        max_attempts: int = 5) -> bool:
+        """
+        Отправка сообщения об успешной обработке в очередь sent messages с retry
+        
+        Args:
+            original_message: Исходное сообщение из RabbitMQ
+            response_data: Данные ответа от системы
+            original_queue: Имя исходной очереди
+            max_attempts: Максимальное количество попыток
+            
+        Returns:
+            True если сообщение успешно отправлено, False иначе
+        """
+        task_id = original_message.get('task_id', 'unknown')
+        
+        for attempt in range(max_attempts):
+            try:
+                logger.debug(f"Bitrix24 Handler: Попытка {attempt + 1}/{max_attempts} отправки результата задачи {task_id}")
+                
+                if self._send_success_message(original_message, response_data, original_queue):
+                    logger.info(f"Bitrix24 Handler: Результат задачи {task_id} успешно отправлен в очередь успешных сообщений (попытка {attempt + 1})")
+                    return True
+                
+                # Если не последняя попытка - ждем перед повтором
+                if attempt < max_attempts - 1:
+                    wait_time = 2 ** attempt  # 1, 2, 4, 8, 16 секунд
+                    logger.warning(f"Bitrix24 Handler: Попытка {attempt + 1} не удалась, повтор через {wait_time}s")
+                    time.sleep(wait_time)
+                
+            except Exception as e:
+                logger.error(f"Bitrix24 Handler: Ошибка попытки {attempt + 1} отправки результата задачи {task_id}: {e}")
+                
+                # Если не последняя попытка - ждем перед повтором
+                if attempt < max_attempts - 1:
+                    wait_time = 2 ** attempt
+                    logger.warning(f"Bitrix24 Handler: Ошибка попытки {attempt + 1}, повтор через {wait_time}s")
+                    time.sleep(wait_time)
+                else:
+                    logger.error(f"Bitrix24 Handler: Все {max_attempts} попыток отправки результата задачи {task_id} провалились")
+        
+        return False
+    
     def get_stats(self) -> Dict[str, Any]:
         """Получение статистики обработчика"""
         # Базовые статистики
@@ -1207,28 +1287,47 @@ class BitrixTaskHandler:
             "publisher_stats": self.publisher.get_stats()
         }
         
-        # Определяем источник данных (теперь всегда файл)
-        data_source = "unknown"
-        if self._cache_timestamp:
-            if self._roles_cache:
-                data_source = "file"
-            else:
-                data_source = "empty"
-        elif self._roles_mapping_file.exists():
-            data_source = "file_not_loaded"
-        
-        base_stats['roles_cache'] = {
-            'roles_cache_size': len(self._roles_cache),
-            'cache_valid': self._is_cache_valid(),
-            'cache_timestamp': self._cache_timestamp.isoformat() if self._cache_timestamp else None,
-            'cache_ttl_seconds': bitrix_config.roles_cache_ttl,
-            'data_source': data_source,
-            'mapping_file': str(self._roles_mapping_file),
-            'mapping_format': 'yaml',
-            'file_exists': self._roles_mapping_file.exists()
-        }
         
         return base_stats
+    
+    def _find_task_by_external_id(self, external_task_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Поиск задачи в Bitrix24 по External Task ID
+        
+        Args:
+            external_task_id: External Task ID из Camunda
+            
+        Returns:
+            Данные задачи если найдена, None если не найдена
+        """
+        try:
+            # Используем tasks.task.list с фильтром по пользовательскому полю
+            url = f"{self.config.webhook_url}/tasks.task.list.json"
+            params = {
+                "filter": {
+                    "UF_CAMUNDA_ID_EXTERNAL_TASK": external_task_id
+                },
+                "select": ["*", "UF_*"]  # Выбираем все поля включая пользовательские
+            }
+            
+            response = requests.post(url, json=params, timeout=self.config.request_timeout)
+            
+            if response.status_code == 200:
+                result = response.json()
+                tasks = result.get('result', {}).get('tasks', [])
+                
+                if tasks:
+                    # Задача найдена
+                    logger.debug(f"Найдена существующая задача в Bitrix24: ID={tasks[0]['id']}, External Task ID={external_task_id}")
+                    return tasks[0]
+            
+            logger.debug(f"Задача с External Task ID {external_task_id} не найдена в Bitrix24")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Ошибка поиска задачи по External Task ID {external_task_id}: {e}")
+            # При ошибке поиска возвращаем None - лучше создать дубль, чем не создать задачу
+            return None
     
     def cleanup(self):
         """Очистка ресурсов при завершении работы"""

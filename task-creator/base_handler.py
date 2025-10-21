@@ -163,6 +163,50 @@ class BaseMessageHandler(ABC):
             logger.error(f"{self.system_name} Handler: Ошибка при отправке успешного сообщения: {e}")
             return False
     
+    def _send_success_message_with_retry(self, original_message: Dict[str, Any], 
+                                       response_data: Dict[str, Any], original_queue: str, 
+                                       max_attempts: int = 5) -> bool:
+        """
+        Отправка сообщения об успешной обработке в очередь sent messages с retry
+        
+        Args:
+            original_message: Исходное сообщение из RabbitMQ
+            response_data: Данные ответа от системы
+            original_queue: Имя исходной очереди
+            max_attempts: Максимальное количество попыток
+            
+        Returns:
+            True если сообщение успешно отправлено, False иначе
+        """
+        task_id = original_message.get('task_id', 'unknown')
+        
+        for attempt in range(max_attempts):
+            try:
+                logger.debug(f"{self.system_name} Handler: Попытка {attempt + 1}/{max_attempts} отправки результата задачи {task_id}")
+                
+                if self._send_success_message(original_message, response_data, original_queue):
+                    logger.info(f"{self.system_name} Handler: Результат задачи {task_id} успешно отправлен в очередь успешных сообщений (попытка {attempt + 1})")
+                    return True
+                
+                # Если не последняя попытка - ждем перед повтором
+                if attempt < max_attempts - 1:
+                    wait_time = 2 ** attempt  # 1, 2, 4, 8, 16 секунд
+                    logger.warning(f"{self.system_name} Handler: Попытка {attempt + 1} не удалась, повтор через {wait_time}s")
+                    time.sleep(wait_time)
+                
+            except Exception as e:
+                logger.error(f"{self.system_name} Handler: Ошибка попытки {attempt + 1} отправки результата задачи {task_id}: {e}")
+                
+                # Если не последняя попытка - ждем перед повтором
+                if attempt < max_attempts - 1:
+                    wait_time = 2 ** attempt
+                    logger.warning(f"{self.system_name} Handler: Ошибка попытки {attempt + 1}, повтор через {wait_time}s")
+                    time.sleep(wait_time)
+                else:
+                    logger.error(f"{self.system_name} Handler: Все {max_attempts} попыток отправки результата задачи {task_id} провалились")
+        
+        return False
+    
     def get_stats(self) -> Dict[str, Any]:
         """Получение статистики работы обработчика"""
         uptime = time.time() - self.stats["start_time"]

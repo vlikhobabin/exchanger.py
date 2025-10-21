@@ -74,10 +74,15 @@ Camunda Worker использует **интегрированную архит�
 
 Worker автоматически извлекает из BPMN XML и передает в RabbitMQ:
 
-- **Extension Properties** - кастомные свойства элементов
+- **Extension Properties** - кастомные свойства элементов (включая `assigneeId`)
 - **Field Injections** - инъекции полей в Java Delegates
 - **Input Parameters** - входные параметры элементов
 - **Output Parameters** - выходные параметры элементов
+
+**Ключевая особенность - прямое использование assigneeId:**
+- Значение `assigneeId` из BPMN extensionProperties напрямую используется как `responsible_id` в целевых системах
+- Отсутствует необходимость в маппинге ролей через внешние файлы
+- Упрощенная конфигурация и повышенная надежность
 
 **Преимущества кэширования:**
 - **Lazy Loading** - XML загружается только при первой задаче процесса
@@ -298,24 +303,25 @@ python tools/test_response_processing.py
   },
   "metadata": {
     "extensionProperties": {
-      "TestExtensionProperties": "TestValueExtensionProperties",
+      "assigneeId": "3",
       "customProperty": "customValue"
     },
     "fieldInjections": {
-      "TestFieldInjections": "TestValueFieldInjections",
       "serviceUrl": "https://api.example.com"
     },
     "inputParameters": {
-      "Input_2khodeq": "TestInputValue",
       "inputData": "processedValue"
     },
     "outputParameters": {
-      "Output_11dfutm": "TestOutputValue",
       "resultMapping": "responseField"
     }
   }
 }
 ```
+
+**Ключевое поле `assigneeId`:**
+- Значение `assigneeId` из BPMN напрямую используется как `responsible_id` в Bitrix24
+- Пример: `assigneeId: "3"` → `responsible_id: 3` в создаваемой задаче
 
 ### Формат ответа от внешних систем
 

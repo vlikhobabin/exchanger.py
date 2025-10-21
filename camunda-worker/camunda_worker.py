@@ -247,12 +247,34 @@ class UniversalCamundaWorker:
             # Определение целевой системы
             system = self.routing_config.get_system_for_topic(topic)
             
-            # Отправка в RabbitMQ
-            if self.rabbitmq_client.publish_task(topic, task_payload):
+            # ТРАНЗАКЦИОННАЯ БЕЗОПАСНОСТЬ: Сначала отправляем в RabbitMQ, только потом считаем задачу обработанной
+            logger.info(f"Подготовка к отправке задачи {task_id} в {system}...")
+            
+            # Отправка в RabbitMQ с повторными попытками
+            publish_success = False
+            max_publish_attempts = 3
+            
+            for attempt in range(max_publish_attempts):
+                try:
+                    if self.rabbitmq_client.publish_task(topic, task_payload):
+                        publish_success = True
+                        break
+                    else:
+                        logger.warning(f"Попытка {attempt + 1}/{max_publish_attempts} отправки задачи {task_id} не удалась")
+                        if attempt < max_publish_attempts - 1:
+                            time.sleep(2)  # Пауза перед повторной попыткой
+                except Exception as publish_error:
+                    logger.warning(f"Ошибка попытки {attempt + 1}/{max_publish_attempts} отправки задачи {task_id}: {publish_error}")
+                    if attempt < max_publish_attempts - 1:
+                        time.sleep(2)
+            
+            if publish_success:
                 self.stats["successful_tasks"] += 1
-                logger.info(f"Задача {task_id} отправлена в {system}, ожидает ответа")
+                logger.info(f"✅ Задача {task_id} успешно отправлена в {system}, ожидает ответа")
             else:
-                raise Exception("Не удалось опубликовать задачу в RabbitMQ")
+                # КРИТИЧЕСКАЯ ОШИБКА: Задача заблокирована, но не отправлена в RabbitMQ
+                logger.error(f"❌ КРИТИЧЕСКАЯ ОШИБКА: Задача {task_id} заблокирована, но не удалось отправить в RabbitMQ после {max_publish_attempts} попыток")
+                raise Exception(f"Не удалось опубликовать задачу {task_id} в RabbitMQ после {max_publish_attempts} попыток")
                 
         except Exception as e:
             self._handle_task_error(task_id, topic, str(e))
@@ -263,11 +285,26 @@ class UniversalCamundaWorker:
             logger.error(f"Ошибка обработки задачи {task_id}: {error}")
             self.stats["failed_tasks"] += 1
             
-            # Отправка ошибки в RabbitMQ
-            self.rabbitmq_client.publish_error(topic, task_id, error)
+            # Проверяем, является ли это критической ошибкой (задача заблокирована, но не отправлена)
+            is_critical_error = "заблокирована, но не удалось отправить" in error or "КРИТИЧЕСКАЯ ОШИБКА" in error
+            
+            if is_critical_error:
+                logger.critical(f"🚨 КРИТИЧЕСКАЯ ОШИБКА: Задача {task_id} заблокирована в Camunda, но не отправлена в RabbitMQ!")
+                logger.critical(f"🚨 Это может привести к зависанию процесса! Требуется ручное вмешательство.")
+            
+            # Попытка отправки ошибки в RabbitMQ (может не удаться при проблемах с соединением)
+            try:
+                self.rabbitmq_client.publish_error(topic, task_id, error)
+            except Exception as publish_error:
+                logger.error(f"Не удалось отправить ошибку в RabbitMQ для задачи {task_id}: {publish_error}")
             
             # Возврат задачи в Camunda с ошибкой
             retries = max(0, self.worker_config.retry_attempts - 1)
+            
+            # Для критических ошибок уменьшаем количество попыток
+            if is_critical_error:
+                retries = 0  # Не повторяем критические ошибки
+                logger.warning(f"Критическая ошибка для задачи {task_id}, retries установлен в 0")
             
             success = self.client.failure(
                 task_id=task_id,
@@ -278,7 +315,10 @@ class UniversalCamundaWorker:
             )
             
             if success:
-                logger.warning(f"Задача {task_id} возвращена с ошибкой (retries: {retries})")
+                if is_critical_error:
+                    logger.critical(f"🚨 Задача {task_id} возвращена с критической ошибкой (retries: {retries})")
+                else:
+                    logger.warning(f"Задача {task_id} возвращена с ошибкой (retries: {retries})")
             else:
                 logger.error(f"Не удалось вернуть задачу {task_id} с ошибкой")
                 
@@ -336,10 +376,8 @@ class UniversalCamundaWorker:
                 message_data = json.loads(body.decode('utf-8'))
             except (json.JSONDecodeError, UnicodeDecodeError) as e:
                 logger.error(f"Ошибка парсинга сообщения из очереди ответов: {e}")
-                self.rabbitmq_client.channel.basic_nack(
-                    delivery_tag=method_frame.delivery_tag, 
-                    requeue=False
-                )
+                # ACK даже при ошибке парсинга - чтобы не блокировать очередь
+                self.rabbitmq_client.channel.basic_ack(delivery_tag=method_frame.delivery_tag)
                 return True
             
             # DEBUG: Сохраняем сообщение в отладочный файл перед обработкой (если включено)
@@ -351,20 +389,25 @@ class UniversalCamundaWorker:
             # Обрабатываем ответное сообщение
             success = self._process_response_message(message_data)
             
-            # Подтверждаем или отклоняем сообщение
-            if success:
-                self.rabbitmq_client.channel.basic_ack(delivery_tag=method_frame.delivery_tag)
-            else:
-                self.rabbitmq_client.channel.basic_nack(
-                    delivery_tag=method_frame.delivery_tag, 
-                    requeue=True
-                )
-                logger.error("Ошибка обработки сообщения, возвращаем в очередь")
+            # ВСЕГДА ACK, даже если обработка не удалась
+            # Т.к. Camunda API может вернуть 404 если задача уже завершена (retry)
+            self.rabbitmq_client.channel.basic_ack(delivery_tag=method_frame.delivery_tag)
+            
+            if not success:
+                # Логируем, но не requeue - избегаем бесконечного цикла
+                task_id = message_data.get("original_message", {}).get("task_id", "unknown")
+                logger.error(f"Failed to process response for task {task_id}, but ACK sent to avoid loop")
             
             return True
             
         except Exception as e:
             logger.error(f"Ошибка при обработке сообщения из очереди ответов: {e}")
+            # При критической ошибке - ACK чтобы не блокировать очередь
+            if 'method_frame' in locals() and method_frame:
+                try:
+                    self.rabbitmq_client.channel.basic_ack(delivery_tag=method_frame.delivery_tag)
+                except:
+                    pass  # Игнорируем ошибки ACK при критических ошибках
             return False
     
     def _convert_uf_result_answer(self, uf_result_answer_text: str) -> str:

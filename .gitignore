@@ -298,3 +298,4 @@ metrics/
 .uf_result_answer_cache.json 
 
 test_*.*
+.cursor/
