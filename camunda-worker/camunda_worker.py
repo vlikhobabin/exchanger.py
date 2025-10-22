@@ -218,12 +218,18 @@ class UniversalCamundaWorker:
             process_definition_id = task_data.get('processDefinitionId')
             activity_id = task.get_activity_id()
             
+            logger.debug(f"Получение метаданных для задачи {task_id}: process_definition_id={process_definition_id}, activity_id={activity_id}")
+            
             metadata = {}
             if self.metadata_cache and process_definition_id and activity_id:
                 try:
+                    logger.debug(f"Вызов get_activity_metadata для {process_definition_id}/{activity_id}")
                     metadata = self.metadata_cache.get_activity_metadata(process_definition_id, activity_id)
+                    logger.debug(f"Получены метаданные: {metadata}")
                 except Exception as e:
                     logger.warning(f"Ошибка получения метаданных для задачи {task_id}: {e}")
+            else:
+                logger.debug(f"Пропуск получения метаданных: metadata_cache={self.metadata_cache is not None}, process_definition_id={process_definition_id}, activity_id={activity_id}")
             
             # Подготовка расширенных данных для RabbitMQ
             task_payload = {

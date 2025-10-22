@@ -173,6 +173,11 @@ class BitrixTaskHandler:
             project_id = self._extract_project_id(variables)
             # Извлечение originatorId из свойств уровня процесса
             created_by_id = self._extract_originator_id(metadata)
+            # Извлечение groupId из свойств уровня процесса
+            logger.debug(f"Метаданные для задачи {task_id}: {metadata}")
+            logger.debug(f"processProperties в метаданных: {metadata.get('processProperties', {})}")
+            group_id = self._extract_group_id(metadata)
+            logger.debug(f"Извлечен group_id: {group_id}")
             
             # Подготовка данных задачи для Bitrix24
             task_data = {
@@ -182,6 +187,10 @@ class BitrixTaskHandler:
                 'PRIORITY': priority,
                 'CREATED_BY': created_by_id,
             }
+            
+            # Добавить GROUP_ID если указан
+            if group_id is not None:
+                task_data['GROUP_ID'] = group_id
             
             # Добавление GROUP_ID если указан projectId (пока отключено для тестирования)
             # if project_id:
@@ -478,6 +487,33 @@ class BitrixTaskHandler:
         except (ValueError, TypeError) as e:
             logger.error(f"Некорректный originatorId={originator_id}: {e}, используется ID=1 по умолчанию")
             return 1
+    
+    def _extract_group_id(self, metadata: Dict[str, Any]) -> Optional[int]:
+        """
+        Извлечение ID группы (проекта) из свойств уровня процесса
+        
+        Args:
+            metadata: Метаданные сообщения из RabbitMQ
+            
+        Returns:
+            ID группы Bitrix24 для поля GROUP_ID или None если не указан
+        """
+        # Получаем processProperties из метаданных
+        process_properties = metadata.get("processProperties", {})
+        
+        group_id = process_properties.get("groupId")
+        
+        if not group_id:
+            logger.debug("groupId не найден в processProperties, GROUP_ID не будет установлен")
+            return None
+        
+        try:
+            group_id_int = int(group_id)
+            logger.debug(f"Используется groupId={group_id} как GROUP_ID={group_id_int}")
+            return group_id_int
+        except (ValueError, TypeError) as e:
+            logger.error(f"Некорректный groupId={group_id}: {e}, GROUP_ID не будет установлен")
+            return None
     
     def _extract_created_by_id(self, variables: Dict[str, Any], metadata: Dict[str, Any] = None) -> int:
         """Извлечение ID постановщика задачи (CREATED_BY) из переменных процесса"""
