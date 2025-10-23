@@ -238,6 +238,7 @@ class UniversalCamundaWorker:
                 "variables": task.get_variables(),
                 "processInstanceId": task.get_process_instance_id(),
                 "processDefinitionId": process_definition_id,
+                "processDefinitionKey": task_data.get("processDefinitionKey"),  # Добавляем ключ процесса напрямую
                 "activityId": activity_id,
                 "activityInstanceId": task_data.get("activityInstanceId"),
                 "workerId": task.get_worker_id(),

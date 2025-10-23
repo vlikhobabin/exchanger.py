@@ -36,7 +36,9 @@ class BitrixTaskHandler:
             "start_time": time.time(),
             "last_message_time": None,
             "sent_to_success_queue": 0,
-            "failed_to_send_success": 0
+            "failed_to_send_success": 0,
+            "sync_requests_sent": 0,
+            "sync_requests_failed": 0
         }
     
     def process_message(self, message_data: Dict[str, Any], properties: Any) -> bool:
@@ -77,6 +79,13 @@ class BitrixTaskHandler:
                 else:
                     self.stats["failed_to_send_success"] += 1
                     logger.warning("Не удалось отправить результат в очередь успешных сообщений")
+                
+                # Отправка запроса синхронизации в Bitrix24
+                sync_success = self._send_sync_request(message_data)
+                if sync_success:
+                    logger.info(f"Синхронизация выполнена успешно для задачи {task_id}")
+                else:
+                    logger.warning(f"Не удалось выполнить синхронизацию для задачи {task_id}")
                 
                 return True
             else:
@@ -171,13 +180,21 @@ class BitrixTaskHandler:
             
             # Извлечение данных проекта и постановщика из переменных процесса
             project_id = self._extract_project_id(variables)
-            # Извлечение originatorId из свойств уровня процесса
-            created_by_id = self._extract_originator_id(metadata)
+            
+            # Извлечение CREATED_BY из переменных процесса startedBy
+            created_by_id = self._extract_started_by_id(variables)
+            
+            # Извлечение originatorId для AUDITORS из свойств уровня процесса
+            originator_id = self._extract_originator_id(metadata)
+            
             # Извлечение groupId из свойств уровня процесса
-            logger.debug(f"Метаданные для задачи {task_id}: {metadata}")
-            logger.debug(f"processProperties в метаданных: {metadata.get('processProperties', {})}")
+            # logger.debug(f"Метаданные для задачи {task_id}: {metadata}")
+            # logger.debug(f"processProperties в метаданных: {metadata.get('processProperties', {})}")
             group_id = self._extract_group_id(metadata)
-            logger.debug(f"Извлечен group_id: {group_id}")
+
+            # logger.debug(f"Извлечен group_id: {group_id}")
+            # logger.debug(f"Извлечен startedBy для CREATED_BY: {created_by_id}")
+            # logger.debug(f"Извлечен originatorId для AUDITORS: {originator_id}")
             
             # Подготовка данных задачи для Bitrix24
             task_data = {
@@ -186,6 +203,7 @@ class BitrixTaskHandler:
                 'RESPONSIBLE_ID': responsible_id,
                 'PRIORITY': priority,
                 'CREATED_BY': created_by_id,
+                'AUDITORS': [originator_id],  # Добавляем originator как наблюдателя
             }
             
             # Добавить GROUP_ID если указан
@@ -214,6 +232,8 @@ class BitrixTaskHandler:
             # Подготовка данных для отправки
             payload = {'fields': task_data}
             
+            # Дополнительное логирование для отладки
+            logger.debug(f"Финальная структура task_data: {json.dumps(task_data, ensure_ascii=False, indent=2)}")
             logger.debug(f"Отправка задачи в Bitrix24: {json.dumps(payload, ensure_ascii=False, indent=2)}")
             logger.info(f"URL запроса: {self.task_add_url}")
             logger.info(f"Данные задачи: {json.dumps(task_data, ensure_ascii=False, indent=2)}")
@@ -456,6 +476,40 @@ class BitrixTaskHandler:
             except (ValueError, TypeError):
                 logger.warning(f"Не удалось преобразовать projectId в число: {project_id}")
         return None
+    
+    def _extract_started_by_id(self, variables: Dict[str, Any]) -> int:
+        """
+        Извлечение ID постановщика задачи (CREATED_BY) из переменных процесса startedBy
+        
+        Args:
+            variables: Переменные процесса из Camunda
+            
+        Returns:
+            ID пользователя Bitrix24 для поля CREATED_BY
+            
+        Raises:
+            ValueError: Если startedBy не указан или некорректен
+        """
+        started_by = variables.get('startedBy')
+        
+        if not started_by:
+            # Fallback - используем ID=1 по умолчанию с предупреждением
+            logger.warning("startedBy не найден в переменных процесса, используется ID=1 по умолчанию")
+            return 1
+        
+        try:
+            # Обработка формата Camunda переменных: {"value": ID, "type": "Long"}
+            if isinstance(started_by, dict) and 'value' in started_by:
+                started_by_id = int(started_by['value'])
+            else:
+                # Прямое значение
+                started_by_id = int(started_by)
+            
+            logger.debug(f"Используется startedBy={started_by} как created_by_id={started_by_id}")
+            return started_by_id
+        except (ValueError, TypeError) as e:
+            logger.error(f"Некорректный startedBy={started_by}: {e}, используется ID=1 по умолчанию")
+            return 1
     
     def _extract_originator_id(self, metadata: Dict[str, Any]) -> int:
         """
@@ -1330,6 +1384,69 @@ class BitrixTaskHandler:
         
         return False
     
+    def _send_sync_request(self, message_data: Dict[str, Any]) -> bool:
+        """
+        Отправка запроса синхронизации в Bitrix24 после успешного создания задачи
+        
+        Args:
+            message_data: Данные сообщения с processInstanceId и processDefinitionKey
+            
+        Returns:
+            True если синхронизация успешна, False иначе
+        """
+        try:
+            # Извлекаем данные процесса
+            process_instance_id = message_data.get('processInstanceId')
+            process_definition_key = message_data.get('processDefinitionKey')
+            
+            if not process_instance_id:
+                logger.warning("processInstanceId не найден в сообщении, пропускаем синхронизацию")
+                return False
+                
+            if not process_definition_key:
+                logger.warning("processDefinitionKey не найден в сообщении, пропускаем синхронизацию")
+                return False
+            
+            # URL для синхронизации
+            sync_url = f"{self.config.webhook_url.rstrip('/')}/imena.camunda.sync"
+            
+            # Данные для отправки
+            sync_data = {
+                "processDefinitionKey": process_definition_key,
+                "processInstanceId": process_instance_id
+            }
+            
+            logger.info(f"Отправка запроса синхронизации в Bitrix24: {sync_data}")
+            
+            # Отправка POST запроса
+            response = requests.post(
+                sync_url,
+                json=sync_data,
+                timeout=self.config.request_timeout,
+                headers={'Content-Type': 'application/json'}
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                if result.get('result', {}).get('success'):
+                    logger.info(f"Синхронизация успешна: processInstanceId={process_instance_id}, processDefinitionKey={process_definition_key}")
+                    self.stats["sync_requests_sent"] += 1
+                    return True
+                else:
+                    error_msg = result.get('result', {}).get('error', 'Unknown error')
+                    logger.error(f"Ошибка синхронизации: {error_msg}")
+                    self.stats["sync_requests_failed"] += 1
+                    return False
+            else:
+                logger.error(f"HTTP ошибка синхронизации: {response.status_code} - {response.text}")
+                self.stats["sync_requests_failed"] += 1
+                return False
+                
+        except Exception as e:
+            logger.error(f"Ошибка отправки запроса синхронизации: {e}")
+            self.stats["sync_requests_failed"] += 1
+            return False
+    
     def get_stats(self) -> Dict[str, Any]:
         """Получение статистики обработчика"""
         # Базовые статистики
@@ -1342,6 +1459,8 @@ class BitrixTaskHandler:
             "failed_tasks": self.stats["failed_tasks"],
             "sent_to_success_queue": self.stats["sent_to_success_queue"],
             "failed_to_send_success": self.stats["failed_to_send_success"],
+            "sync_requests_sent": self.stats["sync_requests_sent"],
+            "sync_requests_failed": self.stats["sync_requests_failed"],
             "success_rate": (
                 self.stats["successful_tasks"] / self.stats["total_messages"] * 100
                 if self.stats["total_messages"] > 0 else 0
@@ -1349,6 +1468,10 @@ class BitrixTaskHandler:
             "success_queue_rate": (
                 self.stats["sent_to_success_queue"] / self.stats["successful_tasks"] * 100
                 if self.stats["successful_tasks"] > 0 else 0
+            ),
+            "sync_success_rate": (
+                self.stats["sync_requests_sent"] / (self.stats["sync_requests_sent"] + self.stats["sync_requests_failed"]) * 100
+                if (self.stats["sync_requests_sent"] + self.stats["sync_requests_failed"]) > 0 else 0
             ),
             "last_message_time": self.stats["last_message_time"],
             "publisher_stats": self.publisher.get_stats()

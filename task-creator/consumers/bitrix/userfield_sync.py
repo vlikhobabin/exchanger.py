@@ -32,74 +32,73 @@ class BitrixUserFieldSync:
         self.config = config
         self.cache_file = Path(__file__).parent / '.uf_result_answer_cache.json'
         
-        # Формируем URL для кастомного API endpoint
-        # Убираем стандартный webhook путь и добавляем прямой путь к API
-        base_url = self.config.webhook_url.split('/rest/')[0]
-        self.api_url = f"{base_url}/local/modules/imena.camunda/lib/UserFields/userfields_api.php"
+        # Используем стандартный webhook Bitrix24
+        self.webhook_url = self.config.webhook_url
         
         logger.debug(f"BitrixUserFieldSync инициализирован, кеш-файл: {self.cache_file}")
-        logger.debug(f"API URL: {self.api_url}")
+        logger.debug(f"Webhook URL: {self.webhook_url}")
     
     def fetch_uf_result_answer_values(self) -> Optional[Dict[str, Any]]:
         """
-        Запрос к кастомному API Bitrix24 для получения значений поля UF_RESULT_ANSWER.
+        Запрос к стандартному webhook Bitrix24 для получения значений поля UF_RESULT_ANSWER.
         
         Returns:
             Dict с данными поля или None при ошибке
         """
         try:
-            logger.debug(f"Попытка запроса к кастомному API: {self.api_url}")
+            logger.debug(f"Попытка запроса к webhook Bitrix24: {self.webhook_url}")
             
-            url = f"{self.api_url}?api=1&method=list"
+            # Используем метод imena.camunda.userfield.list
+            url = f"{self.webhook_url}/imena.camunda.userfield.list"
             response = requests.get(url, timeout=self.config.request_timeout)
             
             # Проверяем статус ответа
             response.raise_for_status()
             result = response.json()
             
-            # Проверяем статус ответа API
-            if result.get('status') != 'success':
+            # Проверяем наличие ошибок в ответе
+            if 'error' in result:
                 logger.debug(f"API вернул ошибку: {result.get('error', 'Unknown error')}")
                 return None
             
             # Проверяем наличие данных в API
-            api_data = result.get('data', {})
+            api_data = result.get('result', {})
             user_fields = api_data.get('userFields', [])
             
             # Ищем поле UF_RESULT_ANSWER
             for field in user_fields:
                 if field.get('FIELD_NAME') == 'UF_RESULT_ANSWER':
-                    logger.info(f"✅ Найдено поле UF_RESULT_ANSWER в кастомном API")
+                    logger.info(f"✅ Найдено поле UF_RESULT_ANSWER в webhook API")
                     return field
             
-            logger.debug("Поле UF_RESULT_ANSWER не найдено в кастомном API")
+            logger.debug("Поле UF_RESULT_ANSWER не найдено в webhook API")
             return None
                 
         except requests.exceptions.RequestException as e:
-            logger.debug(f"Ошибка запроса к кастомному API: {e}")
+            logger.debug(f"Ошибка запроса к webhook API: {e}")
             return None
         except json.JSONDecodeError as e:
-            logger.debug(f"Ошибка декодирования ответа от кастомного API: {e}")
+            logger.debug(f"Ошибка декодирования ответа от webhook API: {e}")
             return None
         except Exception as e:
-            logger.debug(f"Неожиданная ошибка при запросе к кастомному API: {e}")
+            logger.debug(f"Неожиданная ошибка при запросе к webhook API: {e}")
             return None
     
     def parse_list_values(self, field_data: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
         """
-        Извлечение значений списка из данных поля кастомного API.
+        Извлечение значений списка из данных поля webhook API.
         
         Args:
-            field_data: Данные поля из кастомного API Bitrix24
+            field_data: Данные поля из webhook API Bitrix24
             
         Returns:
             Список значений или None при ошибке
         """
         try:
-            # Получаем enum значения из кастомного API
+            # Получаем enum значения из webhook API
             enum_values = field_data.get('ENUM_VALUES', [])
             if enum_values:
-                logger.debug(f"Найдено {len(enum_values)} enum значений в кастомном API")
+                logger.debug(f"Найдено {len(enum_values)} enum значений в webhook API")
                 
                 for item in enum_values:
                     item_id = item.get('ID', 'unknown')
@@ -215,10 +214,10 @@ class BitrixUserFieldSync:
     
     def sync_mapping(self) -> bool:
         """
-        Синхронизация маппинга через API и обновление кеша.
+        Синхронизация маппинга через webhook API и обновление кеша.
         
         Логика:
-        1. Получает данные из API Bitrix24
+        1. Получает данные из webhook API Bitrix24
         2. При успехе: сохраняет в кеш и возвращает True
         3. При ошибке: инвалидирует кеш (очищает файл) и возвращает False
         
@@ -236,18 +235,18 @@ class BitrixUserFieldSync:
                     if mapping:
                         # Сохраняем в кеш
                         if self.save_to_cache_file(mapping):
-                            logger.info("✅ Маппинг успешно получен из API и сохранен в кеш")
+                            logger.info("✅ Маппинг успешно получен из webhook API и сохранен в кеш")
                             return True
                         else:
-                            logger.warning("⚠️ Маппинг получен из API, но не удалось сохранить в кеш")
+                            logger.warning("⚠️ Маппинг получен из webhook API, но не удалось сохранить в кеш")
                             return False
             
-            logger.error("❌ Не удалось получить данные из API")
+            logger.error("❌ Не удалось получить данные из webhook API")
             self.invalidate_cache()
             return False
             
         except Exception as e:
-            logger.error(f"Ошибка при получении данных из API: {e}")
+            logger.error(f"Ошибка при получении данных из webhook API: {e}")
             self.invalidate_cache()
             return False
     def invalidate_cache(self) -> None:
