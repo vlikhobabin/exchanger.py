@@ -150,9 +150,34 @@ class RabbitMQConsumer:
                 processing_time = time.time() - start_time
                 logger.info(f"Сообщение {message_id} из {queue_name} успешно обработано за {processing_time:.2f}s")
             else:
-                ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
-                self._update_stats(queue_name, False)
-                logger.error(f"Ошибка обработки сообщения {message_id} из {queue_name}")
+                # Проверяем количество ретраев
+                retry_count = self._get_retry_count(properties, message_data)
+                max_retries = 5
+                
+                if retry_count >= max_retries:
+                    logger.critical(f"Сообщение {message_id} из {queue_name} превысило лимит ретраев ({max_retries}), отправляем в очередь ошибок")
+                    # Отправляем в очередь ошибок
+                    self._send_to_error_queue(queue_name, message_data, f"Превышен лимит ретраев ({max_retries})")
+                    ch.basic_ack(delivery_tag=method.delivery_tag)  # ACK чтобы не обрабатывать повторно
+                    self._update_stats(queue_name, True)  # Считаем как обработанное
+                else:
+                    # Увеличиваем счетчик ретраев в сообщении
+                    message_data['retry_count'] = retry_count + 1
+                    
+                    # Отправляем сообщение обратно в очередь с обновленным счетчиком
+                    ch.basic_publish(
+                        exchange='',
+                        routing_key=queue_name,
+                        body=json.dumps(message_data),
+                        properties=pika.BasicProperties(
+                            content_type='application/json',
+                            delivery_mode=2  # persistent
+                        )
+                    )
+                    
+                    ch.basic_ack(delivery_tag=method.delivery_tag)  # ACK оригинальное сообщение
+                    self._update_stats(queue_name, False)
+                    logger.error(f"Ошибка обработки сообщения {message_id} из {queue_name} (попытка {retry_count + 1}/{max_retries}), отправляем обратно в очередь")
                 
         except Exception as e:
             logger.error(f"Критическая ошибка при обработке сообщения {message_id} из {queue_name}: {e}")
@@ -170,6 +195,60 @@ class RabbitMQConsumer:
         else:
             self.stats["failed_messages"] += 1
             self.stats["queue_stats"][queue_name]["failed"] += 1
+    
+    def _get_retry_count(self, properties, message_data: Dict[str, Any]) -> int:
+        """Получение количества ретраев из заголовков сообщения"""
+        try:
+            # Проверяем заголовки RabbitMQ
+            if hasattr(properties, 'headers') and properties.headers:
+                retry_count = properties.headers.get('x-retry-count', 0)
+                return int(retry_count)
+            
+            # Проверяем данные сообщения
+            if 'retry_count' in message_data:
+                return int(message_data['retry_count'])
+                
+            return 0
+        except (ValueError, TypeError):
+            return 0
+    
+    def _send_to_error_queue(self, queue_name: str, message_data: Dict[str, Any], error_message: str) -> bool:
+        """Отправка сообщения в очередь ошибок"""
+        try:
+            task_id = message_data.get('task_id', 'unknown')
+            logger.critical(f"Отправка сообщения {task_id} в очередь ошибок: {error_message}")
+            
+            # Подготавливаем данные для очереди ошибок
+            error_data = {
+                "timestamp": int(time.time() * 1000),
+                "original_message": message_data,
+                "error_type": "RETRY_LIMIT_EXCEEDED",
+                "error_message": error_message,
+                "source_queue": queue_name,
+                "requires_manual_intervention": True,
+                "suggested_action": "Проверить корректность данных сообщения и исправить ошибки"
+            }
+            
+            # Отправляем в очередь ошибок
+            error_queue = "errors.camunda_tasks.queue"
+            message_json = json.dumps(error_data, ensure_ascii=False)
+            
+            self.channel.basic_publish(
+                exchange='',
+                routing_key=error_queue,
+                body=message_json,
+                properties=pika.BasicProperties(
+                    content_type='application/json',
+                    delivery_mode=2  # persistent
+                )
+            )
+            
+            logger.info(f"Сообщение {task_id} отправлено в очередь ошибок {error_queue}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Ошибка отправки в очередь ошибок: {e}")
+            return False
     
     def start_consuming(self) -> bool:
         """Запуск потребления сообщений из всех зарегистрированных очередей"""

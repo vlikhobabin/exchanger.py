@@ -81,6 +81,7 @@ class BitrixTaskHandler:
                     logger.warning("Не удалось отправить результат в очередь успешных сообщений")
                 
                 # Отправка запроса синхронизации в Bitrix24
+                logger.info(f"Попытка синхронизации для задачи {task_id}, данные сообщения: {message_data}")
                 sync_success = self._send_sync_request(message_data)
                 if sync_success:
                     logger.info(f"Синхронизация выполнена успешно для задачи {task_id}")
@@ -110,7 +111,8 @@ class BitrixTaskHandler:
             
             # Отправляем в очередь ошибок для ручного разбора
             self._send_to_error_queue(message_data, str(e))
-            return False
+            # ВАЖНО: Возвращаем True чтобы сообщение было ACK'нуто и не обрабатывалось повторно
+            return True
             
         except Exception as e:
             self.stats["failed_tasks"] += 1
@@ -236,7 +238,7 @@ class BitrixTaskHandler:
             logger.debug(f"Финальная структура task_data: {json.dumps(task_data, ensure_ascii=False, indent=2)}")
             logger.debug(f"Отправка задачи в Bitrix24: {json.dumps(payload, ensure_ascii=False, indent=2)}")
             logger.info(f"URL запроса: {self.task_add_url}")
-            logger.info(f"Данные задачи: {json.dumps(task_data, ensure_ascii=False, indent=2)}")
+            logger.debug(f"Данные задачи: {json.dumps(task_data, ensure_ascii=False, indent=2)}")
             
             # Отправка POST запроса
             response = requests.post(
@@ -374,14 +376,18 @@ class BitrixTaskHandler:
     
     def _extract_assignee_id(self, variables: Dict[str, Any], metadata: Dict[str, Any]) -> str:
         """Извлечение ID роли (assigneeId) из extensionProperties"""
+        logger.info(f"Извлечение assigneeId: metadata={metadata}")
         # Проверяем наличие extensionProperties с assigneeId
         extension_properties = metadata.get("extensionProperties", {})
+        logger.info(f"extensionProperties: {extension_properties}")
         if "assigneeId" in extension_properties:
             assignee_id = extension_properties["assigneeId"]
+            logger.info(f"Найден assigneeId: {assignee_id}")
             if assignee_id:
                 return str(assignee_id)
         
         # Fallback - возвращаем None если роль не найдена
+        logger.warning("assigneeId не найден в extensionProperties")
         return None
     
     def _get_responsible_id_by_assignee(self, assignee_id: str) -> int:
@@ -1395,16 +1401,21 @@ class BitrixTaskHandler:
             True если синхронизация успешна, False иначе
         """
         try:
+            logger.info(f"Начало синхронизации, данные сообщения: {message_data}")
             # Извлекаем данные процесса
-            process_instance_id = message_data.get('processInstanceId')
-            process_definition_key = message_data.get('processDefinitionKey')
+            process_instance_id = message_data.get('processInstanceId') or message_data.get('process_instance_id')
+            process_definition_key = message_data.get('processDefinitionKey') or message_data.get('process_definition_key')
+            
+            logger.info(f"Извлеченные данные: processInstanceId={process_instance_id}, processDefinitionKey={process_definition_key}")
             
             if not process_instance_id:
-                logger.warning("processInstanceId не найден в сообщении, пропускаем синхронизацию")
+                logger.warning("processInstanceId/process_instance_id не найден в сообщении, пропускаем синхронизацию")
+                logger.debug(f"Доступные поля в сообщении: {list(message_data.keys())}")
                 return False
                 
             if not process_definition_key:
-                logger.warning("processDefinitionKey не найден в сообщении, пропускаем синхронизацию")
+                logger.warning("processDefinitionKey/process_definition_key не найден в сообщении, пропускаем синхронизацию")
+                logger.debug(f"Доступные поля в сообщении: {list(message_data.keys())}")
                 return False
             
             # URL для синхронизации
