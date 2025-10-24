@@ -28,8 +28,31 @@ class RabbitMQPublisher:
     def _handle_connection_error(self, error) -> bool:
         """Обработка ошибок соединения с автоматическим переподключением"""
         error_str = str(error)
-        if "Connection reset by peer" in error_str or "IndexError" in error_str or "pop from an empty deque" in error_str:
+        connection_errors = [
+            "Connection reset by peer",
+            "IndexError", 
+            "pop from an empty deque",
+            "Stream connection lost",
+            "ConnectionResetError",
+            "Broken pipe",
+            "Connection refused"
+        ]
+        
+        if any(err in error_str for err in connection_errors):
             logger.warning(f"Обнаружена ошибка соединения: {error_str}, переподключаемся...")
+            # Закрываем существующие соединения перед переподключением
+            try:
+                if self.channel and not self.channel.is_closed:
+                    self.channel.close()
+                if self.connection and not self.connection.is_closed:
+                    self.connection.close()
+            except:
+                pass
+            
+            # Сбрасываем состояние
+            self.connection = None
+            self.channel = None
+            
             return self.connect()
         return False
 
@@ -75,6 +98,14 @@ class RabbitMQPublisher:
         Returns:
             True если сообщение успешно отправлено, False иначе
         """
+        # Подготовка сообщения заранее, чтобы избежать проблем с областью видимости
+        message_json = json.dumps(message_data, ensure_ascii=False, default=str)
+        properties = pika.BasicProperties(
+            delivery_mode=2 if persistent else 1,  # 2 = persistent
+            content_type='application/json',
+            content_encoding='utf-8'
+        )
+        
         try:
             if not self.is_connected():
                 logger.warning("Нет соединения с RabbitMQ, пытаемся переподключиться...")
@@ -84,16 +115,6 @@ class RabbitMQPublisher:
             
             # Проверяем/создаем очередь
             self.channel.queue_declare(queue=queue_name, durable=True)
-            
-            # Подготовка сообщения
-            message_json = json.dumps(message_data, ensure_ascii=False, default=str)
-            
-            # Свойства сообщения
-            properties = pika.BasicProperties(
-                delivery_mode=2 if persistent else 1,  # 2 = persistent
-                content_type='application/json',
-                content_encoding='utf-8'
-            )
             
             # Отправка сообщения
             self.channel.basic_publish(

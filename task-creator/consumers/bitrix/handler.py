@@ -80,13 +80,14 @@ class BitrixTaskHandler:
                     self.stats["failed_to_send_success"] += 1
                     logger.warning("Не удалось отправить результат в очередь успешных сообщений")
                 
-                # Отправка запроса синхронизации в Bitrix24
+                # ОБЯЗАТЕЛЬНАЯ синхронизация (критически важно для корректной работы)
                 logger.info(f"Попытка синхронизации для задачи {task_id}, данные сообщения: {message_data}")
                 sync_success = self._send_sync_request(message_data)
                 if sync_success:
                     logger.info(f"Синхронизация выполнена успешно для задачи {task_id}")
                 else:
-                    logger.warning(f"Не удалось выполнить синхронизацию для задачи {task_id}")
+                    logger.error(f"КРИТИЧЕСКАЯ ОШИБКА: Не удалось выполнить синхронизацию для задачи {task_id}")
+                    # Синхронизация обязательна - это не просто предупреждение
                 
                 return True
             else:
@@ -238,7 +239,7 @@ class BitrixTaskHandler:
             logger.debug(f"Финальная структура task_data: {json.dumps(task_data, ensure_ascii=False, indent=2)}")
             logger.debug(f"Отправка задачи в Bitrix24: {json.dumps(payload, ensure_ascii=False, indent=2)}")
             logger.info(f"URL запроса: {self.task_add_url}")
-            logger.debug(f"Данные задачи: {json.dumps(task_data, ensure_ascii=False, indent=2)}")
+            # logger.debug(f"Данные задачи: {json.dumps(task_data, ensure_ascii=False, indent=2)}")
             
             # Отправка POST запроса
             response = requests.post(
@@ -1414,9 +1415,24 @@ class BitrixTaskHandler:
                 return False
                 
             if not process_definition_key:
-                logger.warning("processDefinitionKey/process_definition_key не найден в сообщении, пропускаем синхронизацию")
-                logger.debug(f"Доступные поля в сообщении: {list(message_data.keys())}")
-                return False
+                logger.error("processDefinitionKey/process_definition_key не найден в сообщении - КРИТИЧЕСКАЯ ОШИБКА!")
+                logger.error(f"Доступные поля в сообщении: {list(message_data.keys())}")
+                logger.error(f"Полное содержимое сообщения: {json.dumps(message_data, ensure_ascii=False, indent=2)}")
+                
+                # Попытка извлечь ключ из processDefinitionId
+                process_definition_id = message_data.get('processDefinitionId') or message_data.get('process_definition_id')
+                if process_definition_id:
+                    try:
+                        # processDefinitionId обычно имеет формат "key:version:id"
+                        process_definition_key = process_definition_id.split(':')[0]
+                        logger.info(f"Извлечен processDefinitionKey из processDefinitionId: {process_definition_key}")
+                    except Exception as e:
+                        logger.error(f"Ошибка извлечения ключа из processDefinitionId {process_definition_id}: {e}")
+                        # НЕ возвращаем False - продолжаем попытку синхронизации с fallback
+                        logger.error("Продолжаем синхронизацию без processDefinitionKey (может привести к ошибкам)")
+                else:
+                    logger.error("processDefinitionId также не найден - синхронизация невозможна")
+                    return False
             
             # URL для синхронизации
             sync_url = f"{self.config.webhook_url.rstrip('/')}/imena.camunda.sync"

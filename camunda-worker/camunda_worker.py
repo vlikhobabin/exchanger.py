@@ -231,6 +231,9 @@ class UniversalCamundaWorker:
             else:
                 logger.debug(f"Пропуск получения метаданных: metadata_cache={self.metadata_cache is not None}, process_definition_id={process_definition_id}, activity_id={activity_id}")
             
+            # Логирование исходных данных для отладки
+            logger.info(f"Исходные данные задачи {task_id}: {json.dumps(task_data, ensure_ascii=False, indent=2)}")
+            
             # Подготовка расширенных данных для RabbitMQ
             task_payload = {
                 "id": task_id,
@@ -238,7 +241,7 @@ class UniversalCamundaWorker:
                 "variables": task.get_variables(),
                 "processInstanceId": task.get_process_instance_id(),
                 "processDefinitionId": process_definition_id,
-                "processDefinitionKey": task_data.get("processDefinitionKey"),  # Добавляем ключ процесса напрямую
+                "processDefinitionKey": task_data.get("processDefinitionKey"),  # Из исходных данных задачи
                 "activityId": activity_id,
                 "activityInstanceId": task_data.get("activityInstanceId"),
                 "workerId": task.get_worker_id(),
@@ -250,6 +253,23 @@ class UniversalCamundaWorker:
                 # Добавляем метаданные BPMN
                 "metadata": metadata
             }
+            
+            # Логирование processDefinitionKey для отладки
+            process_def_key = task_data.get("processDefinitionKey")
+            if process_def_key:
+                logger.info(f"processDefinitionKey найден для задачи {task_id}: {process_def_key}")
+            else:
+                logger.error(f"processDefinitionKey НЕ найден для задачи {task_id}. Доступные поля: {list(task_data.keys())}")
+                # Попытка извлечь ключ из processDefinitionId
+                if process_definition_id:
+                    try:
+                        # processDefinitionId обычно имеет формат "key:version:id"
+                        extracted_key = process_definition_id.split(':')[0]
+                        logger.info(f"Извлечен ключ процесса из processDefinitionId: {extracted_key}")
+                        # Обновляем processDefinitionKey в task_payload
+                        task_payload["processDefinitionKey"] = extracted_key
+                    except Exception as e:
+                        logger.error(f"Ошибка извлечения ключа из processDefinitionId {process_definition_id}: {e}")
             
             # Определение целевой системы
             system = self.routing_config.get_system_for_topic(topic)
