@@ -232,7 +232,7 @@ class UniversalCamundaWorker:
                 logger.debug(f"Пропуск получения метаданных: metadata_cache={self.metadata_cache is not None}, process_definition_id={process_definition_id}, activity_id={activity_id}")
             
             # Логирование исходных данных для отладки
-            logger.info(f"Исходные данные задачи {task_id}: {json.dumps(task_data, ensure_ascii=False, indent=2)}")
+            logger.debug(f"Исходные данные задачи {task_id}: {json.dumps(task_data, ensure_ascii=False, indent=2)}")
             
             # Подготовка расширенных данных для RabbitMQ
             task_payload = {

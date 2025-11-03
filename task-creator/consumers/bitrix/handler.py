@@ -38,7 +38,11 @@ class BitrixTaskHandler:
             "sent_to_success_queue": 0,
             "failed_to_send_success": 0,
             "sync_requests_sent": 0,
-            "sync_requests_failed": 0
+            "sync_requests_failed": 0,
+            "templates_requested": 0,
+            "templates_found": 0,
+            "templates_not_found": 0,
+            "templates_api_errors": 0
         }
     
     def process_message(self, message_data: Dict[str, Any], properties: Any) -> bool:
@@ -81,7 +85,7 @@ class BitrixTaskHandler:
                     logger.warning("Не удалось отправить результат в очередь успешных сообщений")
                 
                 # ОБЯЗАТЕЛЬНАЯ синхронизация (критически важно для корректной работы)
-                logger.info(f"Попытка синхронизации для задачи {task_id}, данные сообщения: {message_data}")
+                logger.debug(f"Попытка синхронизации для задачи {task_id}, данные сообщения: {message_data}")
                 sync_success = self._send_sync_request(message_data)
                 if sync_success:
                     logger.info(f"Синхронизация выполнена успешно для задачи {task_id}")
@@ -122,17 +126,18 @@ class BitrixTaskHandler:
     
     def _create_bitrix_task(self, message_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
-        Идемпотентное создание задачи в Bitrix24 на основе данных сообщения
+        Идемпотентное создание задачи в Bitrix24 на основе данных шаблона из API
         
         Логика:
         1. Извлечь task_id (External Task ID) из message_data
         2. Проверить существование задачи в Bitrix24 по UF_CAMUNDA_ID_EXTERNAL_TASK
         3. Если задача существует:
            - Логировать WARNING о повторной попытке создания
-           - Получить существующую задачу через tasks.task.get
            - Вернуть её данные (как будто только что создали)
         4. Если задачи нет:
-           - Создать новую задачу с UF_CAMUNDA_ID_EXTERNAL_TASK = task_id
+           - Получить шаблон задачи через API imena.camunda.tasktemplate.get
+           - Если шаблон найден: создать задачу из шаблона
+           - Если шаблон не найден: создать задачу с минимальными данными (fallback)
            - Вернуть результат создания
         
         Args:
@@ -144,8 +149,6 @@ class BitrixTaskHandler:
         try:
             # Извлечение данных из сообщения
             task_id = message_data.get('task_id', 'unknown')
-            topic = message_data.get('topic', 'unknown')
-            variables = message_data.get('variables', {})
             metadata = message_data.get('metadata', {})
             
             # Шаг 1: Проверка существования задачи по External Task ID
@@ -166,113 +169,39 @@ class BitrixTaskHandler:
                     }
                 }
             
-            # Формирование заголовка задачи
-            title = self._extract_title(variables, metadata, topic)
+            # Шаг 2: Получение шаблона задачи через API
+            camunda_process_id, element_id = self._extract_template_params(message_data)
             
-            # Формирование описания (в первой версии - все данные сообщения)
-            # description = self._create_description(message_data)
-            # Теперь в описание дублируем title
-            description = title
+            if not camunda_process_id or not element_id:
+                logger.warning(f"Не удалось извлечь параметры для запроса шаблона (camundaProcessId={camunda_process_id}, elementId={element_id})")
+                logger.warning("Переход к fallback: создание задачи с минимальными данными")
+                return self._create_task_fallback(message_data)
             
-            # Извлечение дополнительных параметров
-            assignee_id = self._extract_assignee_id(variables, metadata)
-            responsible_id = self._get_responsible_id_by_assignee(assignee_id)
-            # priority = self._extract_priority(variables, metadata)  # Закомментировано до реализации функциональности приоритетов
-            priority = 1  # Явное значение для обычных задач (не важные)
-            deadline = self._extract_deadline(variables, metadata)
+            template_data = self._get_task_template(camunda_process_id, element_id)
             
-            # Извлечение данных проекта и постановщика из переменных процесса
-            project_id = self._extract_project_id(variables)
+            if not template_data:
+                # Шаблон не найден - используем fallback
+                logger.warning(f"Шаблон не найден для camundaProcessId={camunda_process_id}, elementId={element_id}. Переход к fallback")
+                return self._create_task_fallback(message_data)
             
-            # Извлечение CREATED_BY из переменных процесса startedBy
-            created_by_id = self._extract_started_by_id(variables)
+            # Шаг 3: Формирование task_data из шаблона
+            task_data = self._build_task_data_from_template(template_data, message_data, task_id)
             
-            # Извлечение originatorId для AUDITORS из свойств уровня процесса
-            originator_id = self._extract_originator_id(metadata)
+            # Шаг 4: Создание задачи в Bitrix24
+            result = self._send_task_to_bitrix(task_data)
             
-            # Извлечение groupId из свойств уровня процесса
-            # logger.debug(f"Метаданные для задачи {task_id}: {metadata}")
-            # logger.debug(f"processProperties в метаданных: {metadata.get('processProperties', {})}")
-            group_id = self._extract_group_id(metadata)
-
-            # logger.debug(f"Извлечен group_id: {group_id}")
-            # logger.debug(f"Извлечен startedBy для CREATED_BY: {created_by_id}")
-            # logger.debug(f"Извлечен originatorId для AUDITORS: {originator_id}")
-            
-            # Подготовка данных задачи для Bitrix24
-            task_data = {
-                'TITLE': title,
-                'DESCRIPTION': description,
-                'RESPONSIBLE_ID': responsible_id,
-                'PRIORITY': priority,
-                'CREATED_BY': created_by_id,
-                'AUDITORS': [originator_id],  # Добавляем originator как наблюдателя
-            }
-            
-            # Добавить GROUP_ID если указан
-            if group_id is not None:
-                task_data['GROUP_ID'] = group_id
-            
-            # Добавление GROUP_ID если указан projectId (пока отключено для тестирования)
-            # if project_id:
-            #     task_data['GROUP_ID'] = project_id
-            
-            # Добавление дедлайна если указан
-            if deadline:
-                task_data['DEADLINE'] = deadline
-            
-            # Добавление дополнительных полей из метаданных
-            additional_fields = self._extract_additional_fields(variables, metadata)
-            task_data.update(additional_fields)
-
-            # Добавление пользовательских полей UF_ из метаданных
-            user_fields = self._extract_user_fields(metadata)
-            task_data.update(user_fields)
-            
-            # Явное добавление поля для связи с Camunda External Task
-            task_data['UF_CAMUNDA_ID_EXTERNAL_TASK'] = task_id
-            
-            # Подготовка данных для отправки
-            payload = {'fields': task_data}
-            
-            # Дополнительное логирование для отладки
-            logger.debug(f"Финальная структура task_data: {json.dumps(task_data, ensure_ascii=False, indent=2)}")
-            logger.debug(f"Отправка задачи в Bitrix24: {json.dumps(payload, ensure_ascii=False, indent=2)}")
-            logger.info(f"URL запроса: {self.task_add_url}")
-            # logger.debug(f"Данные задачи: {json.dumps(task_data, ensure_ascii=False, indent=2)}")
-            
-            # Отправка POST запроса
-            response = requests.post(
-                self.task_add_url,
-                json=payload,
-                headers={'Content-Type': 'application/json'},
-                timeout=self.config.request_timeout
-            )
-            
-            # Проверка статуса ответа
-            response.raise_for_status()
-            
-            # Логирование ответа от Bitrix24
-            logger.info(f"Ответ от Bitrix24: {response.text}")
-            
-            # Возврат результата
-            result = response.json()
-            
-            if result.get('error'):
-                logger.error(f"Ошибка API Bitrix24: {result['error']}")
-                logger.error(f"Описание ошибки: {result.get('error_description', 'Не указано')}")
+            if result and result.get('error'):
+                logger.error(f"Ошибка API Bitrix24 при создании задачи: {result['error']}")
                 return result
             
-            # Если задача создана успешно, создаем чек-листы
-            if result.get('result') and result['result'].get('task'):
+            # Шаг 5: Если задача создана успешно, создаем чек-листы из шаблона
+            if result and result.get('result') and result['result'].get('task'):
                 created_task_id = result['result']['task'].get('id')
                 if created_task_id:
-                    # Извлекаем данные чек-листов
-                    checklists_data = self._extract_checklists(metadata)
+                    checklists_data = self._extract_checklists_from_template(template_data)
                     
                     if checklists_data:
                         logger.info(f"Создание чек-листов для задачи {created_task_id}")
-                        # Создаем чек-листы синхронно
                         try:
                             success = self.create_task_checklists_sync(int(created_task_id), checklists_data)
                             if success:
@@ -330,8 +259,433 @@ class BitrixTaskHandler:
             logger.error(f"Неожиданная ошибка при создании задачи в Bitrix24: {e}")
             return error_result
     
+    def _build_task_data_from_template(self, template_data: Dict[str, Any], message_data: Dict[str, Any], task_id: str) -> Dict[str, Any]:
+        """
+        Формирование task_data из шаблона задачи
+        
+        Args:
+            template_data: Данные шаблона из API (result.data)
+            message_data: Исходные данные сообщения
+            task_id: External Task ID
+            
+        Returns:
+            Словарь task_data для создания задачи в Bitrix24
+        """
+        template = template_data.get('template', {})
+        members = template_data.get('members', {})
+        tags = template_data.get('tags', [])
+        metadata = message_data.get('metadata', {})
+        process_properties = metadata.get('processProperties', {})
+        originator_id = process_properties.get('originatorId')
+        
+        # Отладочная информация о доступных данных
+        logger.debug(f"Данные для формирования task_data:")
+        logger.debug(f"  template.RESPONSIBLE_ID: {template.get('RESPONSIBLE_ID')}")
+        logger.debug(f"  template.CREATED_BY: {template.get('CREATED_BY')}")
+        logger.debug(f"  members.by_type.R: {members.get('by_type', {}).get('R', [])}")
+        logger.debug(f"  originatorId: {originator_id}")
+        
+        task_data = {}
+        
+        # Основные поля из шаблона
+        if template.get('TITLE'):
+            task_data['TITLE'] = template['TITLE']
+        
+        if template.get('DESCRIPTION'):
+            task_data['DESCRIPTION'] = template['DESCRIPTION']
+        
+        # PRIORITY - строковое значение, конвертируем в int если нужно
+        priority = template.get('PRIORITY')
+        if priority:
+            try:
+                task_data['PRIORITY'] = int(priority)
+            except (ValueError, TypeError):
+                task_data['PRIORITY'] = self.config.default_priority
+        else:
+            task_data['PRIORITY'] = self.config.default_priority
+        
+        # GROUP_ID из шаблона
+        group_id = template.get('GROUP_ID')
+        if group_id:
+            try:
+                task_data['GROUP_ID'] = int(group_id)
+            except (ValueError, TypeError):
+                logger.warning(f"Некорректный GROUP_ID в шаблоне: {group_id}")
+        
+        # CREATED_BY с fallback на originatorId
+        created_by = template.get('CREATED_BY')
+        if created_by:
+            try:
+                task_data['CREATED_BY'] = int(created_by)
+            except (ValueError, TypeError):
+                logger.warning(f"Некорректный CREATED_BY в шаблоне: {created_by}, используем originatorId")
+                if originator_id:
+                    try:
+                        task_data['CREATED_BY'] = int(originator_id)
+                    except (ValueError, TypeError):
+                        task_data['CREATED_BY'] = 1
+                        logger.warning(f"Некорректный originatorId: {originator_id}, используем значение по умолчанию 1")
+                else:
+                    task_data['CREATED_BY'] = 1
+                    logger.warning("CREATED_BY не указан в шаблоне и originatorId отсутствует, используем значение по умолчанию 1")
+        else:
+            # Fallback на originatorId
+            if originator_id:
+                try:
+                    task_data['CREATED_BY'] = int(originator_id)
+                except (ValueError, TypeError):
+                    task_data['CREATED_BY'] = 1
+                    logger.warning(f"Некорректный originatorId: {originator_id}, используем значение по умолчанию 1")
+            else:
+                task_data['CREATED_BY'] = 1
+                logger.warning("CREATED_BY не указан в шаблоне и originatorId отсутствует, используем значение по умолчанию 1")
+        
+        # DEADLINE из DEADLINE_AFTER (секунды → datetime)
+        deadline_after = template.get('DEADLINE_AFTER')
+        if deadline_after:
+            try:
+                deadline_after_seconds = int(deadline_after)
+                if deadline_after_seconds > 0:
+                    deadline_date = datetime.now() + timedelta(seconds=deadline_after_seconds)
+                    # Формат для Bitrix24: YYYY-MM-DD HH:MM:SS
+                    task_data['DEADLINE'] = deadline_date.strftime('%Y-%m-%d %H:%M:%S')
+                    logger.debug(f"Вычислен DEADLINE: {task_data['DEADLINE']} (через {deadline_after_seconds} секунд)")
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Некорректный DEADLINE_AFTER в шаблоне: {deadline_after}, ошибка: {e}")
+        
+        # Участники из members.by_type
+        members_by_type = members.get('by_type', {})
+        
+        # RESPONSIBLE_ID: Приоритет - members.R → template.RESPONSIBLE_ID → originatorId
+        responsibles = members_by_type.get('R', [])
+        if responsibles:
+            try:
+                # Берем первого ответственного из members.R
+                responsible_user_id = int(responsibles[0].get('USER_ID'))
+                task_data['RESPONSIBLE_ID'] = responsible_user_id
+                logger.debug(f"RESPONSIBLE_ID из шаблона (members.R): {responsible_user_id}")
+            except (ValueError, TypeError, IndexError, KeyError) as e:
+                logger.warning(f"Ошибка обработки RESPONSIBLES из шаблона: {e}")
+                # Продолжаем с template.RESPONSIBLE_ID
+                responsible_id = template.get('RESPONSIBLE_ID')
+                if responsible_id:
+                    try:
+                        task_data['RESPONSIBLE_ID'] = int(responsible_id)
+                        logger.debug(f"RESPONSIBLE_ID из шаблона (template.RESPONSIBLE_ID): {task_data['RESPONSIBLE_ID']}")
+                    except (ValueError, TypeError):
+                        # Fallback на originatorId
+                        if originator_id:
+                            try:
+                                task_data['RESPONSIBLE_ID'] = int(originator_id)
+                                logger.debug(f"RESPONSIBLE_ID из originatorId: {task_data['RESPONSIBLE_ID']}")
+                            except (ValueError, TypeError):
+                                task_data['RESPONSIBLE_ID'] = 1
+                                logger.warning(f"Некорректный originatorId: {originator_id}, используем значение по умолчанию 1")
+                        else:
+                            task_data['RESPONSIBLE_ID'] = 1
+                            logger.warning("RESPONSIBLE_ID не найден, используем значение по умолчанию 1")
+                else:
+                    # Fallback на originatorId
+                    if originator_id:
+                        try:
+                            task_data['RESPONSIBLE_ID'] = int(originator_id)
+                            logger.debug(f"RESPONSIBLE_ID из originatorId: {task_data['RESPONSIBLE_ID']}")
+                        except (ValueError, TypeError):
+                            task_data['RESPONSIBLE_ID'] = 1
+                            logger.warning(f"Некорректный originatorId: {originator_id}, используем значение по умолчанию 1")
+                    else:
+                        task_data['RESPONSIBLE_ID'] = 1
+                        logger.warning("RESPONSIBLE_ID не найден, используем значение по умолчанию 1")
+        else:
+            # Нет members.R, используем template.RESPONSIBLE_ID
+            responsible_id = template.get('RESPONSIBLE_ID')
+            if responsible_id:
+                try:
+                    task_data['RESPONSIBLE_ID'] = int(responsible_id)
+                    logger.debug(f"RESPONSIBLE_ID из шаблона (template.RESPONSIBLE_ID): {task_data['RESPONSIBLE_ID']}")
+                except (ValueError, TypeError):
+                    # Fallback на originatorId
+                    if originator_id:
+                        try:
+                            task_data['RESPONSIBLE_ID'] = int(originator_id)
+                            logger.debug(f"RESPONSIBLE_ID из originatorId: {task_data['RESPONSIBLE_ID']}")
+                        except (ValueError, TypeError):
+                            task_data['RESPONSIBLE_ID'] = 1
+                            logger.warning(f"Некорректный originatorId: {originator_id}, используем значение по умолчанию 1")
+                    else:
+                        task_data['RESPONSIBLE_ID'] = 1
+                        logger.warning("RESPONSIBLE_ID не указан в шаблоне и originatorId отсутствует, используем значение по умолчанию 1")
+            else:
+                # Fallback на originatorId
+                if originator_id:
+                    try:
+                        task_data['RESPONSIBLE_ID'] = int(originator_id)
+                        logger.debug(f"RESPONSIBLE_ID из originatorId: {task_data['RESPONSIBLE_ID']}")
+                    except (ValueError, TypeError):
+                        task_data['RESPONSIBLE_ID'] = 1
+                        logger.warning(f"Некорректный originatorId: {originator_id}, используем значение по умолчанию 1")
+                else:
+                    task_data['RESPONSIBLE_ID'] = 1
+                    logger.warning("RESPONSIBLE_ID не указан в шаблоне и originatorId отсутствует, используем значение по умолчанию 1")
+        
+        # ACCOMPLICES (A) - список всех соисполнителей
+        accomplices = members_by_type.get('A', [])
+        if accomplices:
+            try:
+                accomplice_ids = [int(m.get('USER_ID')) for m in accomplices if m.get('USER_ID')]
+                if accomplice_ids:
+                    task_data['ACCOMPLICES'] = accomplice_ids
+                    logger.debug(f"ACCOMPLICES из шаблона: {accomplice_ids}")
+            except (ValueError, TypeError, KeyError) as e:
+                logger.warning(f"Ошибка обработки ACCOMPLICES из шаблона: {e}")
+        
+        # AUDITORS (U) - список всех наблюдателей
+        auditors = members_by_type.get('U', [])
+        if auditors:
+            try:
+                auditor_ids = [int(m.get('USER_ID')) for m in auditors if m.get('USER_ID')]
+                if auditor_ids:
+                    task_data['AUDITORS'] = auditor_ids
+                    logger.debug(f"AUDITORS из шаблона: {auditor_ids}")
+            except (ValueError, TypeError, KeyError) as e:
+                logger.warning(f"Ошибка обработки AUDITORS из шаблона: {e}")
+        
+        # Теги из tags
+        if tags:
+            try:
+                tag_names = [tag.get('NAME') for tag in tags if tag.get('NAME')]
+                if tag_names:
+                    task_data['TAGS'] = ', '.join(tag_names)
+                    logger.debug(f"TAGS из шаблона: {task_data['TAGS']}")
+            except (TypeError, KeyError, AttributeError) as e:
+                logger.warning(f"Ошибка обработки тегов из шаблона: {e}")
+        
+        # Всегда добавляем UF_CAMUNDA_ID_EXTERNAL_TASK
+        task_data['UF_CAMUNDA_ID_EXTERNAL_TASK'] = task_id
+        
+        # Логирование финальных значений для отладки
+        logger.debug(f"Формирование task_data из шаблона (templateId={template_data.get('meta', {}).get('templateId', 'N/A')}):")
+        logger.debug(f"  TITLE: {task_data.get('TITLE', 'N/A')}")
+        logger.debug(f"  RESPONSIBLE_ID: {task_data.get('RESPONSIBLE_ID', 'НЕ УСТАНОВЛЕН')}")
+        logger.debug(f"  CREATED_BY: {task_data.get('CREATED_BY', 'НЕ УСТАНОВЛЕН')}")
+        logger.debug(f"  GROUP_ID: {task_data.get('GROUP_ID', 'НЕ УСТАНОВЛЕН')}")
+        logger.debug(f"  PRIORITY: {task_data.get('PRIORITY', 'N/A')}")
+        logger.debug(f"  DEADLINE: {task_data.get('DEADLINE', 'НЕ УСТАНОВЛЕН')}")
+        logger.debug(f"  ACCOMPLICES: {task_data.get('ACCOMPLICES', [])}")
+        logger.debug(f"  AUDITORS: {task_data.get('AUDITORS', [])}")
+        logger.debug(f"  TAGS: {task_data.get('TAGS', 'НЕТ')}")
+        
+        return task_data
+    
+    def _create_task_fallback(self, message_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Создание задачи с минимальными данными (fallback при отсутствии шаблона)
+        
+        Args:
+            message_data: Данные сообщения из RabbitMQ
+            
+        Returns:
+            Ответ от API Bitrix24
+        """
+        try:
+            task_id = message_data.get('task_id', 'unknown')
+            metadata = message_data.get('metadata', {})
+            activity_info = metadata.get('activityInfo', {})
+            process_properties = metadata.get('processProperties', {})
+            originator_id = process_properties.get('originatorId')
+            
+            # TITLE из activityInfo.name или fallback
+            title = activity_info.get('name')
+            if not title:
+                topic = message_data.get('topic', 'unknown')
+                title = f'Задача из Camunda процесса ({topic})'
+            
+            # DESCRIPTION - пустое или дубликат TITLE
+            description = title
+            
+            # CREATED_BY и RESPONSIBLE_ID из originatorId (если доступен)
+            created_by = 1
+            responsible_id = 1
+            if originator_id:
+                try:
+                    created_by = int(originator_id)
+                    responsible_id = int(originator_id)
+                except (ValueError, TypeError):
+                    logger.warning(f"Некорректный originatorId: {originator_id}, используем значение по умолчанию 1")
+            
+            task_data = {
+                'TITLE': title,
+                'DESCRIPTION': description,
+                'RESPONSIBLE_ID': responsible_id,
+                'PRIORITY': self.config.default_priority,
+                'CREATED_BY': created_by,
+                'UF_CAMUNDA_ID_EXTERNAL_TASK': task_id
+            }
+            
+            logger.warning(f"Создание задачи в fallback режиме: TITLE={title}, RESPONSIBLE_ID={responsible_id}, CREATED_BY={created_by}")
+            
+            return self._send_task_to_bitrix(task_data)
+            
+        except Exception as e:
+            logger.error(f"Ошибка создания задачи в fallback режиме: {e}")
+            return {
+                'error': 'FALLBACK_ERROR',
+                'error_description': f'Ошибка создания задачи в fallback режиме: {str(e)}'
+            }
+    
+    def _send_task_to_bitrix(self, task_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Отправка задачи в Bitrix24
+        
+        Args:
+            task_data: Данные задачи для создания
+            
+        Returns:
+            Ответ от API Bitrix24
+        """
+        try:
+            # Валидация обязательных полей перед отправкой
+            if not task_data.get('RESPONSIBLE_ID'):
+                error_msg = "RESPONSIBLE_ID не установлен в task_data"
+                logger.error(f"Валидация перед отправкой: {error_msg}")
+                logger.error(f"task_data: {json.dumps(task_data, ensure_ascii=False, indent=2)}")
+                return {
+                    'error': 'VALIDATION_ERROR',
+                    'error_description': error_msg
+                }
+            
+            payload = {'fields': task_data}
+            
+            logger.info(f"Отправка задачи в Bitrix24: TITLE={task_data.get('TITLE')}, RESPONSIBLE_ID={task_data.get('RESPONSIBLE_ID')}")
+            logger.debug(f"Полные данные задачи: {json.dumps(task_data, ensure_ascii=False, indent=2)}")
+            logger.debug(f"URL запроса: {self.task_add_url}")
+            
+            response = requests.post(
+                self.task_add_url,
+                json=payload,
+                headers={'Content-Type': 'application/json'},
+                timeout=self.config.request_timeout
+            )
+            
+            response.raise_for_status()
+            result = response.json()
+            
+            if result.get('error'):
+                logger.error(f"Ошибка API Bitrix24: {result['error']}")
+                logger.error(f"Описание ошибки: {result.get('error_description', 'Не указано')}")
+                
+                # Специальная обработка ошибки "Исполнитель не найден"
+                if "Исполнитель" in str(result.get('error_description', '')) and "не найден" in str(result.get('error_description', '')):
+                    logger.critical(f"КРИТИЧЕСКАЯ ОШИБКА: RESPONSIBLE_ID={task_data.get('RESPONSIBLE_ID')} не найден в Bitrix24")
+                    logger.critical(f"Проверьте, существует ли пользователь с ID={task_data.get('RESPONSIBLE_ID')} в Bitrix24")
+                
+                return result
+            
+            return result
+            
+        except requests.exceptions.RequestException as e:
+            error_result = {
+                'error': 'REQUEST_ERROR',
+                'error_description': f'Ошибка запроса: {str(e)}'
+            }
+            logger.error(f"Ошибка при отправке запроса в Bitrix24: {e}")
+            
+            if hasattr(e, 'response') and e.response is not None:
+                try:
+                    error_details = e.response.text
+                    logger.error(f"Детали ошибки от Bitrix24: {error_details}")
+                except:
+                    pass
+            
+            return error_result
+            
+        except json.JSONDecodeError as e:
+            error_result = {
+                'error': 'JSON_DECODE_ERROR',
+                'error_description': f'Ошибка декодирования JSON: {str(e)}'
+            }
+            logger.error(f"Ошибка декодирования ответа от Bitrix24: {e}")
+            return error_result
+            
+        except Exception as e:
+            error_result = {
+                'error': 'UNEXPECTED_ERROR',
+                'error_description': f'Неожиданная ошибка: {str(e)}'
+            }
+            logger.error(f"Неожиданная ошибка при создании задачи в Bitrix24: {e}")
+            return error_result
+    
+    def _extract_checklists_from_template(self, template_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Извлечение чек-листов из шаблона и преобразование в формат для create_task_checklists_sync()
+        
+        Args:
+            template_data: Данные шаблона из API (result.data)
+            
+        Returns:
+            Список чек-листов в формате [{"name": "...", "items": ["...", "..."]}, ...]
+        """
+        checklists = template_data.get('checklists', {})
+        items = checklists.get('items', [])
+        
+        if not items:
+            return []
+        
+        # Группируем элементы по родительским элементам (уровень 0)
+        checklist_groups = {}
+        
+        for item_data in items:
+            item = item_data.get('item', {})
+            tree = item_data.get('tree', {})
+            
+            title = item.get('TITLE', '')
+            if not title:
+                continue
+            
+            parent_id = tree.get('parent_id')
+            item_id = item.get('ID')
+            level = tree.get('level', 0)
+            
+            # Если это корневой элемент (level == 0)
+            # В древовидной структуре parent_id корневого элемента равен самому item_id
+            if level == 0 or (parent_id is not None and parent_id == item_id):
+                # Это группа чек-листа
+                checklist_groups[item_id] = {
+                    'name': title,
+                    'items': []
+                }
+        
+        # Теперь собираем дочерние элементы для каждой группы
+        for item_data in items:
+            item = item_data.get('item', {})
+            tree = item_data.get('tree', {})
+            
+            title = item.get('TITLE', '')
+            if not title:
+                continue
+            
+            parent_id = tree.get('parent_id')
+            item_id = item.get('ID')
+            level = tree.get('level', 0)
+            
+            # Если это дочерний элемент (level > 0 и parent_id != item_id)
+            if level > 0 and parent_id is not None and parent_id != item_id:
+                # Находим группу по parent_id и добавляем элемент
+                if parent_id in checklist_groups:
+                    checklist_groups[parent_id]['items'].append(title)
+        
+        # Преобразуем в список
+        result = list(checklist_groups.values())
+        
+        logger.debug(f"Извлечено {len(result)} чек-листов из шаблона")
+        return result
+    
+    # ЗАКОММЕНТИРОВАНО: Используется API шаблонов задач
+    # Дата: 2025-11-03
+    # Возможно использование в будущем для fallback или других сценариев
     def _extract_title(self, variables: Dict[str, Any], metadata: Dict[str, Any], topic: str) -> str:
         """Извлечение заголовка задачи из данных сообщения"""
+        # ЗАКОММЕНТИРОВАНО: Теперь используем template.TITLE из API шаблонов
         
         # Приоритет 1: Попытка получить заголовок из activityInfo
         if metadata and 'activityInfo' in metadata:
@@ -352,8 +706,12 @@ class BitrixTaskHandler:
         
         return topic_titles.get(topic, f'Задача из Camunda процесса ({topic})')
     
+    # ЗАКОММЕНТИРОВАНО: Используется API шаблонов задач
+    # Дата: 2025-11-03
+    # Возможно использование в будущем для fallback или других сценариев
     def _create_description(self, message_data: Dict[str, Any]) -> str:
         """Создание описания задачи (для отладки - все данные сообщения)"""
+        # ЗАКОММЕНТИРОВАНО: Теперь используем template.DESCRIPTION из API шаблонов
         try:
             # Форматированное представление всех данных сообщения
             description_parts = [
@@ -375,15 +733,19 @@ class BitrixTaskHandler:
             logger.error(f"Ошибка создания описания: {e}")
             return f"Задача создана автоматически из процесса Camunda BPM\n\nОшибка формирования описания: {str(e)}"
     
+    # ЗАКОММЕНТИРОВАНО: Используется API шаблонов задач
+    # Дата: 2025-11-03
+    # Возможно использование в будущем для fallback или других сценариев
     def _extract_assignee_id(self, variables: Dict[str, Any], metadata: Dict[str, Any]) -> str:
         """Извлечение ID роли (assigneeId) из extensionProperties"""
-        logger.info(f"Извлечение assigneeId: metadata={metadata}")
+        # ЗАКОММЕНТИРОВАНО: Теперь используем template.RESPONSIBLE_ID + fallback на originatorId
+        logger.debug(f"Извлечение assigneeId: metadata={metadata}")
         # Проверяем наличие extensionProperties с assigneeId
         extension_properties = metadata.get("extensionProperties", {})
-        logger.info(f"extensionProperties: {extension_properties}")
+        logger.debug(f"extensionProperties: {extension_properties}")
         if "assigneeId" in extension_properties:
             assignee_id = extension_properties["assigneeId"]
-            logger.info(f"Найден assigneeId: {assignee_id}")
+            logger.debug(f"Найден assigneeId: {assignee_id}")
             if assignee_id:
                 return str(assignee_id)
         
@@ -424,8 +786,12 @@ class BitrixTaskHandler:
     
     
     
+    # ЗАКОММЕНТИРОВАНО: Используется API шаблонов задач
+    # Дата: 2025-11-03
+    # Возможно использование в будущем для fallback или других сценариев
     def _extract_priority(self, variables: Dict[str, Any], metadata: Dict[str, Any]) -> int:
         """Извлечение приоритета задачи"""
+        # ЗАКОММЕНТИРОВАНО: Теперь используем template.PRIORITY из API шаблонов
         # Попытка найти приоритет в переменных
         priority_fields = ['priority', 'task_priority', 'urgency']
         
@@ -448,8 +814,12 @@ class BitrixTaskHandler:
         # Fallback - использование значения по умолчанию
         return self.config.default_priority
     
+    # ЗАКОММЕНТИРОВАНО: Используется API шаблонов задач
+    # Дата: 2025-11-03
+    # Возможно использование в будущем для fallback или других сценариев
     def _extract_deadline(self, variables: Dict[str, Any], metadata: Dict[str, Any]) -> Optional[str]:
         """Извлечение дедлайна задачи"""
+        # ЗАКОММЕНТИРОВАНО: Теперь вычисляем из template.DEADLINE_AFTER (секунды → datetime)
         # Попытка найти дедлайн в переменных
         deadline_fields = ['deadline', 'due_date', 'end_date', 'finish_date']
         
@@ -470,8 +840,12 @@ class BitrixTaskHandler:
         
         return None
     
+    # ЗАКОММЕНТИРОВАНО: Используется API шаблонов задач
+    # Дата: 2025-11-03
+    # Возможно использование в будущем для fallback или других сценариев
     def _extract_project_id(self, variables: Dict[str, Any]) -> Optional[int]:
         """Извлечение ID проекта (GROUP_ID) из переменных процесса"""
+        # ЗАКОММЕНТИРОВАНО: Теперь используем template.GROUP_ID из API шаблонов
         project_id = variables.get('projectId')
         if project_id:
             # Обработка как объекта Camunda {value, type} или простого значения
@@ -484,9 +858,13 @@ class BitrixTaskHandler:
                 logger.warning(f"Не удалось преобразовать projectId в число: {project_id}")
         return None
     
+    # ЗАКОММЕНТИРОВАНО: Используется API шаблонов задач
+    # Дата: 2025-11-03
+    # Возможно использование в будущем для fallback или других сценариев
     def _extract_started_by_id(self, variables: Dict[str, Any]) -> int:
         """
         Извлечение ID постановщика задачи (CREATED_BY) из переменных процесса startedBy
+        # ЗАКОММЕНТИРОВАНО: Теперь используем template.CREATED_BY + fallback на originatorId
         
         Args:
             variables: Переменные процесса из Camunda
@@ -518,9 +896,13 @@ class BitrixTaskHandler:
             logger.error(f"Некорректный startedBy={started_by}: {e}, используется ID=1 по умолчанию")
             return 1
     
+    # ЗАКОММЕНТИРОВАНО: Используется API шаблонов задач
+    # Дата: 2025-11-03
+    # Возможно использование в будущем для fallback или других сценариев
     def _extract_originator_id(self, metadata: Dict[str, Any]) -> int:
         """
         Извлечение ID постановщика (originatorId) из свойств уровня процесса
+        # ЗАКОММЕНТИРОВАНО: Используется для fallback CREATED_BY/RESPONSIBLE_ID в _build_task_data_from_template()
         
         Args:
             metadata: Метаданные сообщения из RabbitMQ
@@ -549,9 +931,13 @@ class BitrixTaskHandler:
             logger.error(f"Некорректный originatorId={originator_id}: {e}, используется ID=1 по умолчанию")
             return 1
     
+    # ЗАКОММЕНТИРОВАНО: Используется API шаблонов задач
+    # Дата: 2025-11-03
+    # Возможно использование в будущем для fallback или других сценариев
     def _extract_group_id(self, metadata: Dict[str, Any]) -> Optional[int]:
         """
         Извлечение ID группы (проекта) из свойств уровня процесса
+        # ЗАКОММЕНТИРОВАНО: Теперь используем template.GROUP_ID из API шаблонов
         
         Args:
             metadata: Метаданные сообщения из RabbitMQ
@@ -576,8 +962,12 @@ class BitrixTaskHandler:
             logger.error(f"Некорректный groupId={group_id}: {e}, GROUP_ID не будет установлен")
             return None
     
+    # ЗАКОММЕНТИРОВАНО: Используется API шаблонов задач
+    # Дата: 2025-11-03
+    # Возможно использование в будущем для fallback или других сценариев
     def _extract_created_by_id(self, variables: Dict[str, Any], metadata: Dict[str, Any] = None) -> int:
         """Извлечение ID постановщика задачи (CREATED_BY) из переменных процесса"""
+        # ЗАКОММЕНТИРОВАНО: Теперь используем template.CREATED_BY + fallback на originatorId
         project_manager_id = variables.get('projectManagerId')
         if project_manager_id:
             try:
@@ -589,8 +979,12 @@ class BitrixTaskHandler:
         assignee_id = self._extract_assignee_id(variables, metadata or {})
         return self._get_responsible_id_by_assignee(assignee_id)
     
+    # ЗАКОММЕНТИРОВАНО: Используется API шаблонов задач
+    # Дата: 2025-11-03
+    # Возможно использование в будущем для fallback или других сценариев
     def _extract_additional_fields(self, variables: Dict[str, Any], metadata: Dict[str, Any]) -> Dict[str, Any]:
         """Извлечение дополнительных полей для задачи"""
+        # ЗАКОММЕНТИРОВАНО: Теперь все поля берутся из шаблона, дополнительные поля не используются
         additional_fields = {}
         
         # Маппинг полей из переменных в поля Bitrix24
@@ -611,9 +1005,13 @@ class BitrixTaskHandler:
         
         return additional_fields
     
+    # ЗАКОММЕНТИРОВАНО: Используется API шаблонов задач
+    # Дата: 2025-11-03
+    # Возможно использование в будущем для fallback или других сценариев
     def _extract_user_fields(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
         """
         Извлечение пользовательских полей UF_ из метаданных
+        # ЗАКОММЕНТИРОВАНО: Пользовательские поля берутся только из шаблона
         
         Args:
             metadata: Метаданные сообщения из RabbitMQ
@@ -667,9 +1065,13 @@ class BitrixTaskHandler:
         
         return user_fields
     
+    # ЗАКОММЕНТИРОВАНО: Используется API шаблонов задач
+    # Дата: 2025-11-03
+    # Возможно использование в будущем для fallback или других сценариев
     def _extract_checklists(self, metadata: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
         Извлечение данных чек-листов из metadata.extensionProperties
+        # ЗАКОММЕНТИРОВАНО: Теперь используем checklists из шаблона через _extract_checklists_from_template()
         
         Args:
             metadata: Метаданные сообщения из RabbitMQ
@@ -1402,12 +1804,12 @@ class BitrixTaskHandler:
             True если синхронизация успешна, False иначе
         """
         try:
-            logger.info(f"Начало синхронизации, данные сообщения: {message_data}")
+            logger.debug(f"Начало синхронизации, данные сообщения: {message_data}")
             # Извлекаем данные процесса
             process_instance_id = message_data.get('processInstanceId') or message_data.get('process_instance_id')
             process_definition_key = message_data.get('processDefinitionKey') or message_data.get('process_definition_key')
             
-            logger.info(f"Извлеченные данные: processInstanceId={process_instance_id}, processDefinitionKey={process_definition_key}")
+            logger.debug(f"Извлеченные данные: processInstanceId={process_instance_id}, processDefinitionKey={process_definition_key}")
             
             if not process_instance_id:
                 logger.warning("processInstanceId/process_instance_id не найден в сообщении, пропускаем синхронизацию")
@@ -1425,7 +1827,7 @@ class BitrixTaskHandler:
                     try:
                         # processDefinitionId обычно имеет формат "key:version:id"
                         process_definition_key = process_definition_id.split(':')[0]
-                        logger.info(f"Извлечен processDefinitionKey из processDefinitionId: {process_definition_key}")
+                        logger.debug(f"Извлечен processDefinitionKey из processDefinitionId: {process_definition_key}")
                     except Exception as e:
                         logger.error(f"Ошибка извлечения ключа из processDefinitionId {process_definition_id}: {e}")
                         # НЕ возвращаем False - продолжаем попытку синхронизации с fallback
@@ -1443,7 +1845,7 @@ class BitrixTaskHandler:
                 "processInstanceId": process_instance_id
             }
             
-            logger.info(f"Отправка запроса синхронизации в Bitrix24: {sync_data}")
+            logger.debug(f"Отправка запроса синхронизации в Bitrix24: {sync_data}")
             
             # Отправка POST запроса
             response = requests.post(
@@ -1488,6 +1890,10 @@ class BitrixTaskHandler:
             "failed_to_send_success": self.stats["failed_to_send_success"],
             "sync_requests_sent": self.stats["sync_requests_sent"],
             "sync_requests_failed": self.stats["sync_requests_failed"],
+            "templates_requested": self.stats["templates_requested"],
+            "templates_found": self.stats["templates_found"],
+            "templates_not_found": self.stats["templates_not_found"],
+            "templates_api_errors": self.stats["templates_api_errors"],
             "success_rate": (
                 self.stats["successful_tasks"] / self.stats["total_messages"] * 100
                 if self.stats["total_messages"] > 0 else 0
@@ -1500,12 +1906,125 @@ class BitrixTaskHandler:
                 self.stats["sync_requests_sent"] / (self.stats["sync_requests_sent"] + self.stats["sync_requests_failed"]) * 100
                 if (self.stats["sync_requests_sent"] + self.stats["sync_requests_failed"]) > 0 else 0
             ),
+            "template_success_rate": (
+                self.stats["templates_found"] / self.stats["templates_requested"] * 100
+                if self.stats["templates_requested"] > 0 else 0
+            ),
             "last_message_time": self.stats["last_message_time"],
             "publisher_stats": self.publisher.get_stats()
         }
         
         
         return base_stats
+    
+    def _extract_template_params(self, message_data: Dict[str, Any]) -> tuple:
+        """
+        Извлечение параметров для запроса к API шаблонов задач
+        
+        Args:
+            message_data: Данные сообщения из RabbitMQ
+            
+        Returns:
+            Кортеж (camunda_process_id, element_id) или (None, None) если не найдены
+        """
+        # Извлечение camunda_process_id (processDefinitionKey)
+        camunda_process_id = (
+            message_data.get('processDefinitionKey') or 
+            message_data.get('process_definition_key')
+        )
+        
+        # Извлечение element_id (activityId)
+        # Приоритет: message_data['activity_id'] → metadata.activityInfo.id
+        element_id = message_data.get('activity_id')
+        
+        if not element_id:
+            metadata = message_data.get('metadata', {})
+            activity_info = metadata.get('activityInfo', {})
+            element_id = activity_info.get('id')
+        
+        # Логирование при отсутствии параметров
+        if not camunda_process_id:
+            logger.warning("Не найден processDefinitionKey/process_definition_key в сообщении")
+            logger.debug(f"Доступные поля в message_data: {list(message_data.keys())}")
+        
+        if not element_id:
+            logger.warning("Не найден activity_id в сообщении (ни в корне, ни в metadata.activityInfo.id)")
+            logger.debug(f"Доступные поля в metadata: {list(message_data.get('metadata', {}).keys())}")
+        
+        return (camunda_process_id, element_id)
+    
+    def _get_task_template(self, camunda_process_id: str, element_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Получение шаблона задачи из Bitrix24 через REST API
+        
+        Args:
+            camunda_process_id: ID процесса Camunda (processDefinitionKey)
+            element_id: ID элемента диаграммы (activityId)
+            
+        Returns:
+            Словарь с данными шаблона (result.data) или None при ошибке
+        """
+        self.stats["templates_requested"] += 1
+        
+        try:
+            api_url = f"{self.config.webhook_url.rstrip('/')}/imena.camunda.tasktemplate.get"
+            params = {
+                'camundaProcessId': camunda_process_id,
+                'elementId': element_id
+            }
+            
+            logger.debug(f"Запрос шаблона задачи: camundaProcessId={camunda_process_id}, elementId={element_id}")
+            
+            response = requests.get(
+                api_url,
+                params=params,
+                timeout=self.config.request_timeout
+            )
+            
+            response.raise_for_status()
+            result = response.json()
+            
+            # Bitrix24 API оборачивает ответ в поле 'result'
+            if 'result' in result:
+                api_result = result['result']
+                
+                if api_result.get('success'):
+                    template_data = api_result.get('data')
+                    if template_data:
+                        self.stats["templates_found"] += 1
+                        logger.info(f"Шаблон задачи найден: templateId={template_data.get('meta', {}).get('templateId', 'N/A')}")
+                        return template_data
+                    else:
+                        self.stats["templates_not_found"] += 1
+                        logger.warning(f"Шаблон не найден: success=True, но data отсутствует")
+                        return None
+                else:
+                    self.stats["templates_not_found"] += 1
+                    error_msg = api_result.get('error', 'Unknown error')
+                    logger.warning(f"Шаблон не найден для camundaProcessId={camunda_process_id}, elementId={element_id}: {error_msg}")
+                    return None
+            else:
+                self.stats["templates_api_errors"] += 1
+                logger.error(f"Неожиданный формат ответа API: отсутствует поле 'result'")
+                logger.debug(f"Ответ API: {json.dumps(result, ensure_ascii=False, indent=2)}")
+                return None
+                
+        except requests.exceptions.Timeout:
+            self.stats["templates_api_errors"] += 1
+            logger.error(f"Таймаут запроса к API шаблонов (timeout={self.config.request_timeout}s)")
+            return None
+        except requests.exceptions.RequestException as e:
+            self.stats["templates_api_errors"] += 1
+            logger.error(f"Ошибка запроса к API шаблонов: {e}")
+            return None
+        except json.JSONDecodeError as e:
+            self.stats["templates_api_errors"] += 1
+            logger.error(f"Ошибка декодирования JSON ответа от API шаблонов: {e}")
+            return None
+        except Exception as e:
+            self.stats["templates_api_errors"] += 1
+            logger.error(f"Неожиданная ошибка при запросе шаблона: {e}")
+            return None
     
     def _find_task_by_external_id(self, external_task_id: str) -> Optional[Dict[str, Any]]:
         """

@@ -34,13 +34,13 @@ def setup_logging():
         colorize=True
     )
     
-    # Файловый вывод
+    # Файловый вывод с оптимизированной ротацией
     logger.add(
         "/opt/exchanger.py/logs/exchanger-task-creator.log",
         format=log_format,
         level=worker_config.log_level,
-        rotation="100 MB",
-        retention="30 days",
+        rotation="20 MB",  # Уменьшено с 100MB для более частой ротации
+        retention="14 days",  # Уменьшено с 30 дней
         compression="zip",
         encoding="utf-8"
     )
@@ -50,8 +50,8 @@ def setup_logging():
         "/opt/exchanger.py/logs/exchanger-task-creator-errors.log",
         format=log_format,
         level="ERROR",
-        rotation="50 MB",
-        retention="60 days",
+        rotation="20 MB",
+        retention="14 days",
         compression="zip",
         encoding="utf-8"
     )

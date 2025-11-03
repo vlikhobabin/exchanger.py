@@ -299,3 +299,4 @@ metrics/
 
 test_*.*
 .cursor/
+tasktemplate_api/

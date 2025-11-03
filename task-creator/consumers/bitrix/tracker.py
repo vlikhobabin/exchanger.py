@@ -160,11 +160,14 @@ class BitrixTaskTracker:
             self._last_message_count = current_message_count
             
             if messages:
-                # Логируем только при изменении количества сообщений или для heartbeat
-                if message_count_changed or should_log_heartbeat:
-                    logger.info(f"Проверка {len(messages)} сообщений в очереди {self.source_queue}")
-                    if should_log_heartbeat:
-                        self._last_heartbeat_log = current_time
+                # Логируем изменения количества сообщений в DEBUG для уменьшения шума
+                if message_count_changed:
+                    logger.debug(f"Проверка {len(messages)} сообщений в очереди {self.source_queue}")
+                
+                # Heartbeat логируем реже - только каждые 15 минут и в INFO
+                if should_log_heartbeat:
+                    logger.info(f"Tracker heartbeat: проверка {len(messages)} сообщений в очереди {self.source_queue}")
+                    self._last_heartbeat_log = current_time
                 
                 # Обрабатываем каждое сообщение
                 for message_info in messages:
@@ -174,7 +177,7 @@ class BitrixTaskTracker:
                         logger.error(f"Критическая ошибка обработки сообщения {message_info.get('delivery_tag', 'unknown')}: {e}")
                         self.stats["failed_checks"] += 1
             elif should_log_heartbeat:
-                # Логируем heartbeat когда очередь пуста
+                # Логируем heartbeat когда очередь пуста (только каждые 15 минут)
                 logger.debug(f"Tracker heartbeat: очередь {self.source_queue} пуста")
                 self._last_heartbeat_log = current_time
                 

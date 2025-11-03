@@ -1,1 +1,0 @@
-# Camunda Worker Package
