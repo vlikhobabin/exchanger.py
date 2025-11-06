@@ -276,14 +276,35 @@ class BitrixTaskHandler:
         tags = template_data.get('tags', [])
         metadata = message_data.get('metadata', {})
         process_properties = metadata.get('processProperties', {})
-        originator_id = process_properties.get('originatorId')
+        variables = message_data.get('variables', {})
+        
+        # Определение инициатора процесса: только startedBy (реальный инициатор), fallback на id=1
+        started_by = variables.get('startedBy')
+        
+        # Используем startedBy как источник инициатора процесса
+        if started_by:
+            try:
+                # Обработка формата Camunda переменных: {"value": ID, "type": "Long"}
+                if isinstance(started_by, dict) and 'value' in started_by:
+                    initiator_id = str(int(started_by['value']))
+                else:
+                    # Прямое значение
+                    initiator_id = str(int(started_by))
+                logger.debug(f"Используется startedBy={started_by} как инициатор процесса: {initiator_id}")
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Некорректный startedBy={started_by}: {e}, будет использовано значение по умолчанию 1")
+                initiator_id = None
+        else:
+            logger.warning("startedBy отсутствует в переменных процесса, будет использовано значение по умолчанию 1")
+            initiator_id = None
         
         # Отладочная информация о доступных данных
         logger.debug(f"Данные для формирования task_data:")
         logger.debug(f"  template.RESPONSIBLE_ID: {template.get('RESPONSIBLE_ID')}")
         logger.debug(f"  template.CREATED_BY: {template.get('CREATED_BY')}")
         logger.debug(f"  members.by_type.R: {members.get('by_type', {}).get('R', [])}")
-        logger.debug(f"  originatorId: {originator_id}")
+        logger.debug(f"  startedBy: {started_by}")
+        logger.debug(f"  initiator_id (используется): {initiator_id}")
         
         task_data = {}
         
@@ -312,33 +333,75 @@ class BitrixTaskHandler:
             except (ValueError, TypeError):
                 logger.warning(f"Некорректный GROUP_ID в шаблоне: {group_id}")
         
-        # CREATED_BY с fallback на originatorId
+        # CREATED_BY с fallback на originatorId и поддержкой руководителя
+        # ВАЖНО: Значение 0 в шаблоне означает, что поле не заполнено
         created_by = template.get('CREATED_BY')
-        if created_by:
+        created_by_use_supervisor = template.get('CREATED_BY_USE_SUPERVISOR', 'N')
+        
+        # Проверяем, что ID валиден (не None, не 0, не пустая строка)
+        try:
+            created_by_int = int(created_by) if created_by is not None else 0
+            is_valid_created_by = created_by_int > 0
+        except (ValueError, TypeError):
+            is_valid_created_by = False
+        
+        if is_valid_created_by:
             try:
                 task_data['CREATED_BY'] = int(created_by)
+                logger.debug(f"CREATED_BY из шаблона: {task_data['CREATED_BY']}")
             except (ValueError, TypeError):
-                logger.warning(f"Некорректный CREATED_BY в шаблоне: {created_by}, используем originatorId")
-                if originator_id:
+                logger.warning(f"Некорректный CREATED_BY в шаблоне: {created_by}, используем fallback")
+                # Fallback: проверяем флаг USE_SUPERVISOR или используем initiatorId
+                if created_by_use_supervisor == 'Y' and initiator_id:
                     try:
-                        task_data['CREATED_BY'] = int(originator_id)
+                        initiator_id_int = int(initiator_id)
+                        supervisor_id = self._get_user_supervisor(initiator_id_int)
+                        if supervisor_id:
+                            task_data['CREATED_BY'] = supervisor_id
+                            logger.debug(f"CREATED_BY из руководителя инициатора (initiatorId={initiator_id_int}, supervisorId={supervisor_id})")
+                        else:
+                            # Руководитель не найден, используем initiatorId
+                            task_data['CREATED_BY'] = initiator_id_int
+                            logger.debug(f"CREATED_BY из initiatorId (руководитель не найден): {task_data['CREATED_BY']}")
                     except (ValueError, TypeError):
                         task_data['CREATED_BY'] = 1
-                        logger.warning(f"Некорректный originatorId: {originator_id}, используем значение по умолчанию 1")
+                        logger.warning(f"Некорректный initiatorId: {initiator_id}, используем значение по умолчанию 1")
+                elif initiator_id:
+                    try:
+                        task_data['CREATED_BY'] = int(initiator_id)
+                        logger.debug(f"CREATED_BY из initiatorId (startedBy): {task_data['CREATED_BY']}")
+                    except (ValueError, TypeError):
+                        task_data['CREATED_BY'] = 1
+                        logger.warning(f"Некорректный initiatorId: {initiator_id}, используем значение по умолчанию 1")
                 else:
                     task_data['CREATED_BY'] = 1
-                    logger.warning("CREATED_BY не указан в шаблоне и originatorId отсутствует, используем значение по умолчанию 1")
+                    logger.warning("CREATED_BY не указан в шаблоне и startedBy отсутствует, используем значение по умолчанию 1")
         else:
-            # Fallback на originatorId
-            if originator_id:
+            # CREATED_BY отсутствует или равен 0, проверяем флаг USE_SUPERVISOR или используем initiatorId
+            if created_by_use_supervisor == 'Y' and initiator_id:
                 try:
-                    task_data['CREATED_BY'] = int(originator_id)
+                    initiator_id_int = int(initiator_id)
+                    supervisor_id = self._get_user_supervisor(initiator_id_int)
+                    if supervisor_id:
+                        task_data['CREATED_BY'] = supervisor_id
+                        logger.debug(f"CREATED_BY из руководителя инициатора (CREATED_BY_USE_SUPERVISOR=Y, initiatorId={initiator_id_int}, supervisorId={supervisor_id})")
+                    else:
+                        # Руководитель не найден, используем initiatorId
+                        task_data['CREATED_BY'] = initiator_id_int
+                        logger.debug(f"CREATED_BY из initiatorId (CREATED_BY_USE_SUPERVISOR=Y, но руководитель не найден): {task_data['CREATED_BY']}")
                 except (ValueError, TypeError):
                     task_data['CREATED_BY'] = 1
-                    logger.warning(f"Некорректный originatorId: {originator_id}, используем значение по умолчанию 1")
+                    logger.warning(f"Некорректный initiatorId: {initiator_id}, используем значение по умолчанию 1")
+            elif initiator_id:
+                try:
+                    task_data['CREATED_BY'] = int(initiator_id)
+                    logger.debug(f"CREATED_BY из initiatorId (startedBy, template.CREATED_BY={created_by}): {task_data['CREATED_BY']}")
+                except (ValueError, TypeError):
+                    task_data['CREATED_BY'] = 1
+                    logger.warning(f"Некорректный initiatorId: {initiator_id}, используем значение по умолчанию 1")
             else:
                 task_data['CREATED_BY'] = 1
-                logger.warning("CREATED_BY не указан в шаблоне и originatorId отсутствует, используем значение по умолчанию 1")
+                logger.warning("CREATED_BY не указан в шаблоне и startedBy отсутствует, используем значение по умолчанию 1")
         
         # DEADLINE из DEADLINE_AFTER (секунды → datetime)
         deadline_after = template.get('DEADLINE_AFTER')
@@ -356,80 +419,156 @@ class BitrixTaskHandler:
         # Участники из members.by_type
         members_by_type = members.get('by_type', {})
         
-        # RESPONSIBLE_ID: Приоритет - members.R → template.RESPONSIBLE_ID → originatorId
+        # RESPONSIBLE_ID: Приоритет - members.R → template.RESPONSIBLE_ID → руководитель/startedBy → id=1
+        # ВАЖНО: Значение 0 в шаблоне означает, что поле не заполнено
+        responsible_use_supervisor = template.get('RESPONSIBLE_USE_SUPERVISOR', 'N')
         responsibles = members_by_type.get('R', [])
         if responsibles:
             try:
                 # Берем первого ответственного из members.R
-                responsible_user_id = int(responsibles[0].get('USER_ID'))
-                task_data['RESPONSIBLE_ID'] = responsible_user_id
-                logger.debug(f"RESPONSIBLE_ID из шаблона (members.R): {responsible_user_id}")
+                responsible_user_id = int(responsibles[0].get('USER_ID', 0))
+                # Проверяем, что ID валиден (не 0)
+                if responsible_user_id and responsible_user_id > 0:
+                    task_data['RESPONSIBLE_ID'] = responsible_user_id
+                    logger.debug(f"RESPONSIBLE_ID из шаблона (members.R): {responsible_user_id}")
+                else:
+                    # USER_ID = 0 означает отсутствие значения, используем fallback
+                    logger.debug(f"USER_ID в members.R = 0 (не заполнено), используем fallback")
+                    raise ValueError("USER_ID равен 0")
             except (ValueError, TypeError, IndexError, KeyError) as e:
                 logger.warning(f"Ошибка обработки RESPONSIBLES из шаблона: {e}")
                 # Продолжаем с template.RESPONSIBLE_ID
                 responsible_id = template.get('RESPONSIBLE_ID')
-                if responsible_id:
+                # Проверяем, что ID валиден (не None, не 0, не пустая строка)
+                try:
+                    responsible_id_int = int(responsible_id) if responsible_id is not None else 0
+                    is_valid = responsible_id_int > 0
+                except (ValueError, TypeError):
+                    is_valid = False
+                
+                if is_valid:
                     try:
                         task_data['RESPONSIBLE_ID'] = int(responsible_id)
                         logger.debug(f"RESPONSIBLE_ID из шаблона (template.RESPONSIBLE_ID): {task_data['RESPONSIBLE_ID']}")
                     except (ValueError, TypeError):
-                        # Fallback на originatorId
-                        if originator_id:
+                        # Fallback: проверяем флаг USE_SUPERVISOR
+                        if responsible_use_supervisor == 'Y' and initiator_id:
                             try:
-                                task_data['RESPONSIBLE_ID'] = int(originator_id)
-                                logger.debug(f"RESPONSIBLE_ID из originatorId: {task_data['RESPONSIBLE_ID']}")
+                                initiator_id_int = int(initiator_id)
+                                supervisor_id = self._get_user_supervisor(initiator_id_int)
+                                if supervisor_id:
+                                    task_data['RESPONSIBLE_ID'] = supervisor_id
+                                    logger.debug(f"RESPONSIBLE_ID из руководителя инициатора (initiatorId={initiator_id_int}, supervisorId={supervisor_id})")
+                                else:
+                                    task_data['RESPONSIBLE_ID'] = initiator_id_int
+                                    logger.debug(f"RESPONSIBLE_ID из initiatorId (руководитель не найден): {task_data['RESPONSIBLE_ID']}")
                             except (ValueError, TypeError):
                                 task_data['RESPONSIBLE_ID'] = 1
-                                logger.warning(f"Некорректный originatorId: {originator_id}, используем значение по умолчанию 1")
+                                logger.warning(f"Некорректный initiatorId: {initiator_id}, используем значение по умолчанию 1")
+                        elif initiator_id:
+                            try:
+                                task_data['RESPONSIBLE_ID'] = int(initiator_id)
+                                logger.debug(f"RESPONSIBLE_ID из initiatorId: {task_data['RESPONSIBLE_ID']}")
+                            except (ValueError, TypeError):
+                                task_data['RESPONSIBLE_ID'] = 1
+                                logger.warning(f"Некорректный initiatorId: {initiator_id}, используем значение по умолчанию 1")
                         else:
                             task_data['RESPONSIBLE_ID'] = 1
                             logger.warning("RESPONSIBLE_ID не найден, используем значение по умолчанию 1")
                 else:
-                    # Fallback на originatorId
-                    if originator_id:
+                    # template.RESPONSIBLE_ID отсутствует или равен 0, проверяем флаг USE_SUPERVISOR
+                    if responsible_use_supervisor == 'Y' and initiator_id:
                         try:
-                            task_data['RESPONSIBLE_ID'] = int(originator_id)
-                            logger.debug(f"RESPONSIBLE_ID из originatorId: {task_data['RESPONSIBLE_ID']}")
+                            initiator_id_int = int(initiator_id)
+                            supervisor_id = self._get_user_supervisor(initiator_id_int)
+                            if supervisor_id:
+                                task_data['RESPONSIBLE_ID'] = supervisor_id
+                                logger.debug(f"RESPONSIBLE_ID из руководителя инициатора (RESPONSIBLE_USE_SUPERVISOR=Y, initiatorId={initiator_id_int}, supervisorId={supervisor_id})")
+                            else:
+                                task_data['RESPONSIBLE_ID'] = initiator_id_int
+                                logger.debug(f"RESPONSIBLE_ID из initiatorId (RESPONSIBLE_USE_SUPERVISOR=Y, но руководитель не найден): {task_data['RESPONSIBLE_ID']}")
                         except (ValueError, TypeError):
                             task_data['RESPONSIBLE_ID'] = 1
-                            logger.warning(f"Некорректный originatorId: {originator_id}, используем значение по умолчанию 1")
+                            logger.warning(f"Некорректный initiatorId: {initiator_id}, используем значение по умолчанию 1")
+                    elif initiator_id:
+                        try:
+                            task_data['RESPONSIBLE_ID'] = int(initiator_id)
+                            logger.debug(f"RESPONSIBLE_ID из initiatorId (template.RESPONSIBLE_ID={responsible_id}): {task_data['RESPONSIBLE_ID']}")
+                        except (ValueError, TypeError):
+                            task_data['RESPONSIBLE_ID'] = 1
+                            logger.warning(f"Некорректный initiatorId: {initiator_id}, используем значение по умолчанию 1")
                     else:
                         task_data['RESPONSIBLE_ID'] = 1
                         logger.warning("RESPONSIBLE_ID не найден, используем значение по умолчанию 1")
         else:
             # Нет members.R, используем template.RESPONSIBLE_ID
             responsible_id = template.get('RESPONSIBLE_ID')
-            if responsible_id:
+            # Проверяем, что ID валиден (не None, не 0, не пустая строка)
+            try:
+                responsible_id_int = int(responsible_id) if responsible_id is not None else 0
+                is_valid = responsible_id_int > 0
+            except (ValueError, TypeError):
+                is_valid = False
+            
+            if is_valid:
                 try:
                     task_data['RESPONSIBLE_ID'] = int(responsible_id)
                     logger.debug(f"RESPONSIBLE_ID из шаблона (template.RESPONSIBLE_ID): {task_data['RESPONSIBLE_ID']}")
                 except (ValueError, TypeError):
-                    # Fallback на originatorId
-                    if originator_id:
+                    # Fallback: проверяем флаг USE_SUPERVISOR
+                    if responsible_use_supervisor == 'Y' and initiator_id:
                         try:
-                            task_data['RESPONSIBLE_ID'] = int(originator_id)
-                            logger.debug(f"RESPONSIBLE_ID из originatorId: {task_data['RESPONSIBLE_ID']}")
+                            initiator_id_int = int(initiator_id)
+                            supervisor_id = self._get_user_supervisor(initiator_id_int)
+                            if supervisor_id:
+                                task_data['RESPONSIBLE_ID'] = supervisor_id
+                                logger.debug(f"RESPONSIBLE_ID из руководителя инициатора (initiatorId={initiator_id_int}, supervisorId={supervisor_id})")
+                            else:
+                                task_data['RESPONSIBLE_ID'] = initiator_id_int
+                                logger.debug(f"RESPONSIBLE_ID из initiatorId (руководитель не найден): {task_data['RESPONSIBLE_ID']}")
                         except (ValueError, TypeError):
                             task_data['RESPONSIBLE_ID'] = 1
-                            logger.warning(f"Некорректный originatorId: {originator_id}, используем значение по умолчанию 1")
+                            logger.warning(f"Некорректный initiatorId: {initiator_id}, используем значение по умолчанию 1")
+                    elif initiator_id:
+                        try:
+                            task_data['RESPONSIBLE_ID'] = int(initiator_id)
+                            logger.debug(f"RESPONSIBLE_ID из initiatorId: {task_data['RESPONSIBLE_ID']}")
+                        except (ValueError, TypeError):
+                            task_data['RESPONSIBLE_ID'] = 1
+                            logger.warning(f"Некорректный initiatorId: {initiator_id}, используем значение по умолчанию 1")
                     else:
                         task_data['RESPONSIBLE_ID'] = 1
-                        logger.warning("RESPONSIBLE_ID не указан в шаблоне и originatorId отсутствует, используем значение по умолчанию 1")
+                        logger.warning("RESPONSIBLE_ID не указан в шаблоне и initiatorId отсутствует, используем значение по умолчанию 1")
             else:
-                # Fallback на originatorId
-                if originator_id:
+                # template.RESPONSIBLE_ID отсутствует или равен 0, проверяем флаг USE_SUPERVISOR
+                if responsible_use_supervisor == 'Y' and initiator_id:
                     try:
-                        task_data['RESPONSIBLE_ID'] = int(originator_id)
-                        logger.debug(f"RESPONSIBLE_ID из originatorId: {task_data['RESPONSIBLE_ID']}")
+                        initiator_id_int = int(initiator_id)
+                        supervisor_id = self._get_user_supervisor(initiator_id_int)
+                        if supervisor_id:
+                            task_data['RESPONSIBLE_ID'] = supervisor_id
+                            logger.debug(f"RESPONSIBLE_ID из руководителя инициатора (RESPONSIBLE_USE_SUPERVISOR=Y, initiatorId={initiator_id_int}, supervisorId={supervisor_id})")
+                        else:
+                            task_data['RESPONSIBLE_ID'] = initiator_id_int
+                            logger.debug(f"RESPONSIBLE_ID из initiatorId (RESPONSIBLE_USE_SUPERVISOR=Y, но руководитель не найден): {task_data['RESPONSIBLE_ID']}")
                     except (ValueError, TypeError):
                         task_data['RESPONSIBLE_ID'] = 1
-                        logger.warning(f"Некорректный originatorId: {originator_id}, используем значение по умолчанию 1")
+                        logger.warning(f"Некорректный initiatorId: {initiator_id}, используем значение по умолчанию 1")
+                elif initiator_id:
+                    try:
+                        task_data['RESPONSIBLE_ID'] = int(initiator_id)
+                        logger.debug(f"RESPONSIBLE_ID из initiatorId (template.RESPONSIBLE_ID={responsible_id}): {task_data['RESPONSIBLE_ID']}")
+                    except (ValueError, TypeError):
+                        task_data['RESPONSIBLE_ID'] = 1
+                        logger.warning(f"Некорректный initiatorId: {initiator_id}, используем значение по умолчанию 1")
                 else:
                     task_data['RESPONSIBLE_ID'] = 1
-                    logger.warning("RESPONSIBLE_ID не указан в шаблоне и originatorId отсутствует, используем значение по умолчанию 1")
+                    logger.warning("RESPONSIBLE_ID не указан в шаблоне и initiatorId отсутствует, используем значение по умолчанию 1")
         
         # ACCOMPLICES (A) - список всех соисполнителей
         accomplices = members_by_type.get('A', [])
+        accomplice_ids = []
+        
         if accomplices:
             try:
                 accomplice_ids = [int(m.get('USER_ID')) for m in accomplices if m.get('USER_ID')]
@@ -439,8 +578,34 @@ class BitrixTaskHandler:
             except (ValueError, TypeError, KeyError) as e:
                 logger.warning(f"Ошибка обработки ACCOMPLICES из шаблона: {e}")
         
+        # Проверяем флаг RESPONSIBLES_USE_SUPERVISOR для добавления руководителя
+        responsibles_use_supervisor = template.get('RESPONSIBLES_USE_SUPERVISOR', 'N')
+        if responsibles_use_supervisor == 'Y' and initiator_id:
+            try:
+                initiator_id_int = int(initiator_id)
+                supervisor_id = self._get_user_supervisor(initiator_id_int)
+                if supervisor_id:
+                    # Инициализируем список, если его еще нет
+                    if 'ACCOMPLICES' not in task_data:
+                        task_data['ACCOMPLICES'] = []
+                    elif not isinstance(task_data['ACCOMPLICES'], list):
+                        task_data['ACCOMPLICES'] = [task_data['ACCOMPLICES']] if task_data['ACCOMPLICES'] else []
+                    
+                    # Добавляем руководителя, если его еще нет в списке
+                    if supervisor_id not in task_data['ACCOMPLICES']:
+                        task_data['ACCOMPLICES'].append(supervisor_id)
+                        logger.debug(f"Добавлен руководитель к ACCOMPLICES (RESPONSIBLES_USE_SUPERVISOR=Y, supervisorId={supervisor_id}): {task_data['ACCOMPLICES']}")
+                    else:
+                        logger.debug(f"Руководитель уже в списке ACCOMPLICES (supervisorId={supervisor_id})")
+                else:
+                    logger.debug(f"Руководитель не найден для добавления в ACCOMPLICES (initiatorId={initiator_id_int})")
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Ошибка при добавлении руководителя в ACCOMPLICES: {e}")
+        
         # AUDITORS (U) - список всех наблюдателей
         auditors = members_by_type.get('U', [])
+        auditor_ids = []
+        
         if auditors:
             try:
                 auditor_ids = [int(m.get('USER_ID')) for m in auditors if m.get('USER_ID')]
@@ -449,6 +614,30 @@ class BitrixTaskHandler:
                     logger.debug(f"AUDITORS из шаблона: {auditor_ids}")
             except (ValueError, TypeError, KeyError) as e:
                 logger.warning(f"Ошибка обработки AUDITORS из шаблона: {e}")
+        
+        # Проверяем флаг AUDITORS_USE_SUPERVISOR для добавления руководителя
+        auditors_use_supervisor = template.get('AUDITORS_USE_SUPERVISOR', 'N')
+        if auditors_use_supervisor == 'Y' and initiator_id:
+            try:
+                initiator_id_int = int(initiator_id)
+                supervisor_id = self._get_user_supervisor(initiator_id_int)
+                if supervisor_id:
+                    # Инициализируем список, если его еще нет
+                    if 'AUDITORS' not in task_data:
+                        task_data['AUDITORS'] = []
+                    elif not isinstance(task_data['AUDITORS'], list):
+                        task_data['AUDITORS'] = [task_data['AUDITORS']] if task_data['AUDITORS'] else []
+                    
+                    # Добавляем руководителя, если его еще нет в списке
+                    if supervisor_id not in task_data['AUDITORS']:
+                        task_data['AUDITORS'].append(supervisor_id)
+                        logger.debug(f"Добавлен руководитель к AUDITORS (AUDITORS_USE_SUPERVISOR=Y, supervisorId={supervisor_id}): {task_data['AUDITORS']}")
+                    else:
+                        logger.debug(f"Руководитель уже в списке AUDITORS (supervisorId={supervisor_id})")
+                else:
+                    logger.debug(f"Руководитель не найден для добавления в AUDITORS (initiatorId={initiator_id_int})")
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Ошибка при добавлении руководителя в AUDITORS: {e}")
         
         # Теги из tags
         if tags:
@@ -463,6 +652,13 @@ class BitrixTaskHandler:
         # Всегда добавляем UF_CAMUNDA_ID_EXTERNAL_TASK
         task_data['UF_CAMUNDA_ID_EXTERNAL_TASK'] = task_id
         
+        # Извлекаем и добавляем пользовательские поля из метаданных сообщения
+        # (UF_RESULT_EXPECTED, UF_RESULT_QUESTION и другие)
+        user_fields = self._extract_user_fields(metadata)
+        if user_fields:
+            task_data.update(user_fields)
+            logger.debug(f"Добавлены пользовательские поля из метаданных: {list(user_fields.keys())}")
+        
         # Логирование финальных значений для отладки
         logger.debug(f"Формирование task_data из шаблона (templateId={template_data.get('meta', {}).get('templateId', 'N/A')}):")
         logger.debug(f"  TITLE: {task_data.get('TITLE', 'N/A')}")
@@ -474,6 +670,7 @@ class BitrixTaskHandler:
         logger.debug(f"  ACCOMPLICES: {task_data.get('ACCOMPLICES', [])}")
         logger.debug(f"  AUDITORS: {task_data.get('AUDITORS', [])}")
         logger.debug(f"  TAGS: {task_data.get('TAGS', 'НЕТ')}")
+        logger.debug(f"  Пользовательские поля: {list(user_fields.keys()) if user_fields else 'НЕТ'}")
         
         return task_data
     
@@ -491,8 +688,8 @@ class BitrixTaskHandler:
             task_id = message_data.get('task_id', 'unknown')
             metadata = message_data.get('metadata', {})
             activity_info = metadata.get('activityInfo', {})
-            process_properties = metadata.get('processProperties', {})
-            originator_id = process_properties.get('originatorId')
+            variables = message_data.get('variables', {})
+            started_by = variables.get('startedBy')
             
             # TITLE из activityInfo.name или fallback
             title = activity_info.get('name')
@@ -503,15 +700,22 @@ class BitrixTaskHandler:
             # DESCRIPTION - пустое или дубликат TITLE
             description = title
             
-            # CREATED_BY и RESPONSIBLE_ID из originatorId (если доступен)
+            # CREATED_BY и RESPONSIBLE_ID из startedBy (если доступен), иначе id=1
             created_by = 1
             responsible_id = 1
-            if originator_id:
+            if started_by:
                 try:
-                    created_by = int(originator_id)
-                    responsible_id = int(originator_id)
-                except (ValueError, TypeError):
-                    logger.warning(f"Некорректный originatorId: {originator_id}, используем значение по умолчанию 1")
+                    # Обработка формата Camunda переменных: {"value": ID, "type": "Long"}
+                    if isinstance(started_by, dict) and 'value' in started_by:
+                        initiator_id_int = int(started_by['value'])
+                    else:
+                        # Прямое значение
+                        initiator_id_int = int(started_by)
+                    created_by = initiator_id_int
+                    responsible_id = initiator_id_int
+                    logger.debug(f"Fallback: используем startedBy={started_by} как CREATED_BY и RESPONSIBLE_ID: {initiator_id_int}")
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Некорректный startedBy: {started_by}, используем значение по умолчанию 1: {e}")
             
             task_data = {
                 'TITLE': title,
@@ -521,6 +725,13 @@ class BitrixTaskHandler:
                 'CREATED_BY': created_by,
                 'UF_CAMUNDA_ID_EXTERNAL_TASK': task_id
             }
+            
+            # Извлекаем и добавляем пользовательские поля из метаданных сообщения
+            # (UF_RESULT_EXPECTED, UF_RESULT_QUESTION и другие)
+            user_fields = self._extract_user_fields(metadata)
+            if user_fields:
+                task_data.update(user_fields)
+                logger.debug(f"Добавлены пользовательские поля из метаданных (fallback): {list(user_fields.keys())}")
             
             logger.warning(f"Создание задачи в fallback режиме: TITLE={title}, RESPONSIBLE_ID={responsible_id}, CREATED_BY={created_by}")
             
@@ -545,8 +756,10 @@ class BitrixTaskHandler:
         """
         try:
             # Валидация обязательных полей перед отправкой
-            if not task_data.get('RESPONSIBLE_ID'):
-                error_msg = "RESPONSIBLE_ID не установлен в task_data"
+            responsible_id = task_data.get('RESPONSIBLE_ID')
+            # Проверяем, что RESPONSIBLE_ID установлен И валиден (не None, не 0)
+            if responsible_id is None or responsible_id == 0:
+                error_msg = f"RESPONSIBLE_ID не установлен или невалиден в task_data (значение: {responsible_id})"
                 logger.error(f"Валидация перед отправкой: {error_msg}")
                 logger.error(f"task_data: {json.dumps(task_data, ensure_ascii=False, indent=2)}")
                 return {
@@ -601,12 +814,12 @@ class BitrixTaskHandler:
             
         except json.JSONDecodeError as e:
             error_result = {
-                'error': 'JSON_DECODE_ERROR',
+                'error': 'JSON_DECODE_ERROR', 
                 'error_description': f'Ошибка декодирования JSON: {str(e)}'
             }
             logger.error(f"Ошибка декодирования ответа от Bitrix24: {e}")
             return error_result
-            
+        
         except Exception as e:
             error_result = {
                 'error': 'UNEXPECTED_ERROR',
@@ -629,11 +842,13 @@ class BitrixTaskHandler:
         items = checklists.get('items', [])
         
         if not items:
+            logger.debug("Нет элементов чек-листов в шаблоне")
             return []
         
         # Группируем элементы по родительским элементам (уровень 0)
         checklist_groups = {}
         
+        # Первый проход: определяем корневые элементы (группы чек-листов)
         for item_data in items:
             item = item_data.get('item', {})
             tree = item_data.get('tree', {})
@@ -642,20 +857,24 @@ class BitrixTaskHandler:
             if not title:
                 continue
             
+            # Приводим ID к строке для консистентности
+            item_id = str(item.get('ID'))
             parent_id = tree.get('parent_id')
-            item_id = item.get('ID')
+            # Приводим parent_id к строке, если он не None
+            parent_id_str = str(parent_id) if parent_id is not None else None
             level = tree.get('level', 0)
             
             # Если это корневой элемент (level == 0)
             # В древовидной структуре parent_id корневого элемента равен самому item_id
-            if level == 0 or (parent_id is not None and parent_id == item_id):
+            if level == 0:
                 # Это группа чек-листа
                 checklist_groups[item_id] = {
                     'name': title,
                     'items': []
                 }
+                logger.debug(f"Найдена группа чек-листа: ID={item_id}, name='{title}'")
         
-        # Теперь собираем дочерние элементы для каждой группы
+        # Второй проход: собираем дочерние элементы для каждой группы
         for item_data in items:
             item = item_data.get('item', {})
             tree = item_data.get('tree', {})
@@ -664,20 +883,27 @@ class BitrixTaskHandler:
             if not title:
                 continue
             
+            item_id = str(item.get('ID'))
             parent_id = tree.get('parent_id')
-            item_id = item.get('ID')
+            parent_id_str = str(parent_id) if parent_id is not None else None
             level = tree.get('level', 0)
             
-            # Если это дочерний элемент (level > 0 и parent_id != item_id)
-            if level > 0 and parent_id is not None and parent_id != item_id:
-                # Находим группу по parent_id и добавляем элемент
-                if parent_id in checklist_groups:
-                    checklist_groups[parent_id]['items'].append(title)
+            # Если это дочерний элемент (level > 0)
+            if level > 0 and parent_id_str and parent_id_str in checklist_groups:
+                # Добавляем элемент в соответствующую группу
+                checklist_groups[parent_id_str]['items'].append(title)
+                logger.debug(f"Добавлен элемент '{title}' в группу {parent_id_str}")
         
         # Преобразуем в список
         result = list(checklist_groups.values())
         
-        logger.debug(f"Извлечено {len(result)} чек-листов из шаблона")
+        # Логируем детальную информацию о каждом чек-листе
+        logger.info(f"Извлечено {len(result)} чек-листов из шаблона:")
+        for i, checklist in enumerate(result, 1):
+            logger.info(f"  Чек-лист {i}: name='{checklist.get('name')}', items={len(checklist.get('items', []))} шт.")
+            for j, item in enumerate(checklist.get('items', []), 1):
+                logger.debug(f"    - {j}. {item}")
+        
         return result
     
     # ЗАКОММЕНТИРОВАНО: Используется API шаблонов задач
@@ -2024,6 +2250,84 @@ class BitrixTaskHandler:
         except Exception as e:
             self.stats["templates_api_errors"] += 1
             logger.error(f"Неожиданная ошибка при запросе шаблона: {e}")
+            return None
+    
+    def _get_user_supervisor(self, user_id: int) -> Optional[int]:
+        """
+        Получение ID руководителя пользователя из Bitrix24 через REST API
+        
+        Args:
+            user_id: ID пользователя Bitrix24
+            
+        Returns:
+            ID руководителя (int) или None, если не найден или произошла ошибка
+        """
+        if not user_id or user_id <= 0:
+            logger.warning(f"Некорректный user_id для запроса руководителя: {user_id}")
+            return None
+        
+        try:
+            api_url = f"{self.config.webhook_url.rstrip('/')}/imena.camunda.user.supervisor.get"
+            params = {
+                'userId': user_id
+            }
+            
+            logger.debug(f"Запрос руководителя пользователя: userId={user_id}")
+            
+            response = requests.get(
+                api_url,
+                params=params,
+                timeout=self.config.request_timeout
+            )
+            
+            response.raise_for_status()
+            result = response.json()
+            
+            # Bitrix24 API оборачивает ответ в поле 'result'
+            if 'result' in result:
+                api_result = result['result']
+                
+                if api_result.get('success'):
+                    data = api_result.get('data', {})
+                    supervisor_id = data.get('supervisorId')
+                    
+                    if supervisor_id is not None:
+                        try:
+                            supervisor_id_int = int(supervisor_id)
+                            if supervisor_id_int > 0:
+                                logger.debug(f"Руководитель найден для userId={user_id}: supervisorId={supervisor_id_int}")
+                                return supervisor_id_int
+                            else:
+                                logger.debug(f"Руководитель не найден для userId={user_id}: supervisorId={supervisor_id}")
+                                return None
+                        except (ValueError, TypeError):
+                            logger.warning(f"Некорректный supervisorId в ответе API: {supervisor_id}")
+                            return None
+                    else:
+                        # Руководитель не найден - это нормальная ситуация, логируем только в debug
+                        logger.debug(f"Руководитель не найден для userId={user_id}: supervisorId=null")
+                        return None
+                else:
+                    error_msg = api_result.get('error', 'Unknown error')
+                    logger.warning(f"Ошибка получения руководителя для userId={user_id}: {error_msg}")
+                    logger.debug(f"Полный ответ API при ошибке: {json.dumps(api_result, ensure_ascii=False, indent=2)}")
+                    return None
+            else:
+                logger.error(f"Неожиданный формат ответа API руководителя: отсутствует поле 'result'")
+                logger.debug(f"Ответ API: {json.dumps(result, ensure_ascii=False, indent=2)}")
+                return None
+                
+        except requests.exceptions.Timeout:
+            logger.error(f"Таймаут запроса к API руководителя для userId={user_id} (timeout={self.config.request_timeout}s)")
+            return None
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Ошибка запроса к API руководителя для userId={user_id}: {e}")
+            return None
+        except json.JSONDecodeError as e:
+            logger.error(f"Ошибка декодирования JSON ответа от API руководителя для userId={user_id}: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Неожиданная ошибка при запросе руководителя для userId={user_id}: {e}")
             return None
     
     def _find_task_by_external_id(self, external_task_id: str) -> Optional[Dict[str, Any]]:

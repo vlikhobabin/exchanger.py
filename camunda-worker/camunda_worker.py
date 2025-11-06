@@ -543,10 +543,16 @@ class UniversalCamundaWorker:
                         
                         logger.info(f"Создана переменная процесса: {activity_id} = '{converted_value}' (исходное: '{uf_result_answer_text}')")
                     else:
-                        logger.warning(f"Не найдено значение ufResultAnswer_text для activity_id: {activity_id}")
+                        # Ответ требуется, но не найден - используем значение по умолчанию
+                        # Это может произойти, если задача была завершена без ответа
+                        variables[activity_id] = "ok"
+                        logger.warning(f"Ответ требуется (ufResultExpected=1), но ufResultAnswer_text не найден для activity_id: {activity_id}. Устанавливаем значение по умолчанию 'ok'")
                 else:
                     # Задача не требует ответа от пользователя (ufResultExpected != "1")
-                    logger.info(f"Задача {task_id} не требует ответа от пользователя (ufResultExpected: {uf_result_expected}), пропускаем установку переменной {activity_id}")
+                    # ВАЖНО: Всегда устанавливаем переменную, даже если ответ не требуется
+                    # Это необходимо для работы conditional flow в BPMN (например, ${Activity_177u7c0 != "ok"})
+                    variables[activity_id] = "ok"
+                    logger.info(f"Задача {task_id} не требует ответа от пользователя (ufResultExpected: {uf_result_expected}), устанавливаем переменную {activity_id} = 'ok' по умолчанию")
             else:
                 logger.warning("Не найден activity_id в original_message")
             
