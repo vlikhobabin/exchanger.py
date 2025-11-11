@@ -217,6 +217,7 @@ class UniversalCamundaWorker:
             # Получение метаданных активности из BPMN XML
             process_definition_id = task_data.get('processDefinitionId')
             activity_id = task.get_activity_id()
+            process_instance_id = task.get_process_instance_id()
             
             logger.debug(f"Получение метаданных для задачи {task_id}: process_definition_id={process_definition_id}, activity_id={activity_id}")
             
@@ -231,6 +232,11 @@ class UniversalCamundaWorker:
             else:
                 logger.debug(f"Пропуск получения метаданных: metadata_cache={self.metadata_cache is not None}, process_definition_id={process_definition_id}, activity_id={activity_id}")
             
+            # Получение переменных процесса из Camunda
+            process_variables = self._get_process_variables(process_instance_id, task_id)
+            if isinstance(metadata, dict):
+                metadata.setdefault("processVariables", process_variables)
+            
             # Логирование исходных данных для отладки
             logger.debug(f"Исходные данные задачи {task_id}: {json.dumps(task_data, ensure_ascii=False, indent=2)}")
             
@@ -239,7 +245,7 @@ class UniversalCamundaWorker:
                 "id": task_id,
                 "topic": topic,
                 "variables": task.get_variables(),
-                "processInstanceId": task.get_process_instance_id(),
+                "processInstanceId": process_instance_id,
                 "processDefinitionId": process_definition_id,
                 "processDefinitionKey": task_data.get("processDefinitionKey"),  # Из исходных данных задачи
                 "activityId": activity_id,
@@ -251,7 +257,9 @@ class UniversalCamundaWorker:
                 "tenantId": task.get_tenant_id(),
                 "businessKey": task.get_business_key(),
                 # Добавляем метаданные BPMN
-                "metadata": metadata
+                "metadata": metadata,
+                # Добавляем переменные процесса уровня процесса
+                "processVariables": process_variables
             }
             
             # Логирование processDefinitionKey для отладки
@@ -351,6 +359,36 @@ class UniversalCamundaWorker:
                 
         except Exception as handle_error:
             logger.error(f"Ошибка обработки ошибки задачи {task_id}: {handle_error}")
+    
+    def _get_process_variables(self, process_instance_id: Optional[str], task_id: str) -> Dict[str, Any]:
+        """Получение переменных процесса из Camunda по ID экземпляра процесса"""
+        if not process_instance_id:
+            logger.debug(f"Пропуск получения переменных процесса для задачи {task_id}: отсутствует processInstanceId")
+            return {}
+        
+        base_url = self.config.base_url.rstrip('/')
+        url = f"{base_url}/process-instance/{process_instance_id}/variables"
+        timeout_seconds = max(1, int(self.config.http_timeout_millis)) / 1000
+        auth = None
+        if self.config.auth_enabled:
+            auth = (self.config.auth_username, self.config.auth_password)
+        
+        try:
+            logger.debug(f"Запрос переменных процесса для задачи {task_id}: {url}")
+            response = requests.get(url, auth=auth, timeout=timeout_seconds)
+            response.raise_for_status()
+            variables = response.json()
+            if not isinstance(variables, dict):
+                logger.warning(f"Неверный формат переменных процесса для {process_instance_id}: ожидается dict, получено {type(variables)}")
+                return {}
+            logger.debug(f"Получены переменные процесса для задачи {task_id}: {list(variables.keys())}")
+            return variables
+        except requests.exceptions.RequestException as request_error:
+            logger.warning(f"Ошибка получения переменных процесса {process_instance_id} для задачи {task_id}: {request_error}")
+        except ValueError as parse_error:
+            logger.warning(f"Ошибка разбора переменных процесса {process_instance_id} для задачи {task_id}: {parse_error}")
+        
+        return {}
     
     def _check_response_queue(self):
         """Проверка и обработка сообщений из очереди ответов"""

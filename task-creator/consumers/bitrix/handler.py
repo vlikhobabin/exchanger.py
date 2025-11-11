@@ -44,6 +44,9 @@ class BitrixTaskHandler:
             "templates_not_found": 0,
             "templates_api_errors": 0
         }
+
+        # Кэш параметров диаграмм Camunda -> Bitrix24
+        self.diagram_properties_cache: Dict[str, List[Dict[str, Any]]] = {}
     
     def process_message(self, message_data: Dict[str, Any], properties: Any) -> bool:
         """
@@ -187,6 +190,16 @@ class BitrixTaskHandler:
             # Шаг 3: Формирование task_data из шаблона
             task_data = self._build_task_data_from_template(template_data, message_data, task_id)
             
+            # Шаг 3.1: Добавление блока переменных процесса в описание задачи
+            variables_block = self._build_process_variables_block(message_data, camunda_process_id, task_id)
+            if variables_block:
+                current_description = task_data.get('DESCRIPTION', '') or ''
+                if current_description:
+                    task_data['DESCRIPTION'] = f"{current_description.rstrip()}\n\n---\n{variables_block}"
+                else:
+                    task_data['DESCRIPTION'] = variables_block
+                logger.debug(f"Добавлен блок переменных процесса в описание задачи {task_id}")
+            
             # Шаг 4: Создание задачи в Bitrix24
             result = self._send_task_to_bitrix(task_data)
             
@@ -258,6 +271,160 @@ class BitrixTaskHandler:
             }
             logger.error(f"Неожиданная ошибка при создании задачи в Bitrix24: {e}")
             return error_result
+    
+    def _build_process_variables_block(self, message_data: Dict[str, Any], camunda_process_id: str, task_id: str) -> Optional[str]:
+        """
+        Формирование текстового блока значений переменных процесса для описания задачи
+        """
+        if not camunda_process_id:
+            logger.debug(f"Пропуск построения блока переменных: отсутствует camundaProcessId для задачи {task_id}")
+            return None
+        
+        properties = self._get_diagram_properties(camunda_process_id)
+        if not properties:
+            logger.debug(f"Список параметров диаграммы пуст для процесса {camunda_process_id}, задача {task_id}")
+            return None
+        
+        metadata = message_data.get('metadata') or {}
+        process_variables = {}
+        if isinstance(metadata, dict):
+            pv_from_metadata = metadata.get('processVariables')
+            if isinstance(pv_from_metadata, dict):
+                process_variables = pv_from_metadata
+        
+        if not process_variables:
+            pv_direct = message_data.get('process_variables')
+            if isinstance(pv_direct, dict):
+                process_variables = pv_direct
+        
+        lines: List[str] = []
+        
+        def sort_key(prop: Dict[str, Any]) -> int:
+            sort_raw = prop.get('SORT', 0)
+            try:
+                return int(sort_raw)
+            except (TypeError, ValueError):
+                return 0
+        
+        for prop in sorted(properties, key=sort_key):
+            code = prop.get('CODE')
+            name = prop.get('NAME') or code or ''
+            property_type = prop.get('TYPE', '')
+            
+            value_entry = process_variables.get(code) if code else None
+            formatted_value = self._format_process_variable_value(property_type, value_entry)
+            lines.append(f"{name}: {formatted_value};")
+        
+        if not lines:
+            logger.debug(f"Не удалось сформировать строки значений переменных процесса для задачи {task_id}")
+            return None
+        
+        return "\n".join(lines)
+
+    def _get_diagram_properties(self, camunda_process_id: str) -> List[Dict[str, Any]]:
+        """
+        Получение списка параметров диаграммы процесса через Bitrix24 REST API
+        """
+        if not camunda_process_id:
+            return []
+        
+        if camunda_process_id in self.diagram_properties_cache:
+            return self.diagram_properties_cache[camunda_process_id]
+        
+        api_url = f"{self.config.webhook_url.rstrip('/')}/imena.camunda.diagram.properties.list"
+        params = {'camundaProcessId': camunda_process_id}
+        
+        try:
+            logger.debug(f"Запрос списка параметров диаграммы: camundaProcessId={camunda_process_id}")
+            response = requests.get(api_url, params=params, timeout=self.config.request_timeout)
+            response.raise_for_status()
+            data = response.json()
+            
+            result = data.get('result', {})
+            if not result.get('success'):
+                logger.warning(f"Bitrix24 вернул пустой список параметров для процесса {camunda_process_id}: {result.get('error')}")
+                self.diagram_properties_cache[camunda_process_id] = []
+                return []
+            
+            properties_data = result.get('data', {})
+            properties = properties_data.get('properties', [])
+            if isinstance(properties, list):
+                self.diagram_properties_cache[camunda_process_id] = properties
+                logger.debug(f"Получено {len(properties)} параметров диаграммы для процесса {camunda_process_id}")
+                return properties
+            
+            logger.warning(f"Неожиданный формат списка параметров для процесса {camunda_process_id}")
+            self.diagram_properties_cache[camunda_process_id] = []
+            return []
+        
+        except requests.exceptions.Timeout:
+            logger.error(f"Таймаут запроса параметров диаграммы (timeout={self.config.request_timeout}s) для процесса {camunda_process_id}")
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Ошибка запроса параметров диаграммы для процесса {camunda_process_id}: {e}")
+        except json.JSONDecodeError as e:
+            logger.error(f"Ошибка декодирования JSON ответа параметров диаграммы: {e}")
+        except Exception as e:
+            logger.error(f"Неожиданная ошибка при запросе параметров диаграммы {camunda_process_id}: {e}")
+        
+        self.diagram_properties_cache[camunda_process_id] = []
+        return []
+
+    def _format_process_variable_value(self, property_type: Optional[str], value_entry: Any) -> str:
+        """
+        Форматирование значения переменной процесса в человекочитаемый вид
+        """
+        value = value_entry
+        if isinstance(value_entry, dict):
+            if 'value' in value_entry:
+                value = value_entry.get('value')
+            elif 'VALUE' in value_entry:
+                value = value_entry.get('VALUE')
+        
+        if isinstance(value, dict) and 'value' in value:
+            value = value.get('value')
+        
+        if value is None:
+            return ""
+        
+        normalized_type = (property_type or '').lower()
+        
+        if normalized_type == 'boolean':
+            bool_value: Optional[bool] = None
+            if isinstance(value, bool):
+                bool_value = value
+            elif isinstance(value, (int, float)):
+                bool_value = value != 0
+            elif isinstance(value, str):
+                bool_value = value.strip().lower() in {'true', '1', 'y', 'yes', 'да', 'истина'}
+            
+            if bool_value is None:
+                return ""
+            return "Да" if bool_value else "Нет"
+        
+        if normalized_type in {'date', 'datetime'}:
+            if isinstance(value, datetime):
+                return value.strftime("%d.%m.%Y")
+            if isinstance(value, str):
+                iso_value = value.strip()
+                if not iso_value:
+                    return ""
+                try:
+                    normalized = iso_value.replace('Z', '+00:00')
+                    dt = datetime.fromisoformat(normalized)
+                    return dt.strftime("%d.%m.%Y")
+                except ValueError:
+                    try:
+                        date_part = iso_value.split('T')[0]
+                        dt = datetime.strptime(date_part, "%Y-%m-%d")
+                        return dt.strftime("%d.%m.%Y")
+                    except ValueError:
+                        return iso_value
+            return str(value)
+        
+        if isinstance(value, list):
+            return ", ".join(str(item) for item in value)
+        
+        return str(value)
     
     def _build_task_data_from_template(self, template_data: Dict[str, Any], message_data: Dict[str, Any], task_id: str) -> Dict[str, Any]:
         """
@@ -699,6 +866,13 @@ class BitrixTaskHandler:
             
             # DESCRIPTION - пустое или дубликат TITLE
             description = title
+            camunda_process_id = (
+                message_data.get('processDefinitionKey') or
+                message_data.get('process_definition_key')
+            )
+            variables_block = self._build_process_variables_block(message_data, camunda_process_id, task_id)
+            if variables_block:
+                description = f"{description.rstrip()}\n\n---\n{variables_block}" if description else variables_block
             
             # CREATED_BY и RESPONSIBLE_ID из startedBy (если доступен), иначе id=1
             created_by = 1

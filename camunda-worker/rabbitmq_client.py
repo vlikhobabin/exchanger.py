@@ -148,6 +148,7 @@ class RabbitMQClient:
                 "topic": topic,
                 "system": system,
                 "variables": task_data.get("variables", {}),
+                "process_variables": task_data.get("processVariables", {}),
                 "process_instance_id": task_data.get("processInstanceId"),
                 "process_definition_key": task_data.get("processDefinitionKey"),  # Добавляем ключ процесса
                 "activity_id": task_data.get("activityId"),
