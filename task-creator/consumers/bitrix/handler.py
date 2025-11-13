@@ -8,7 +8,7 @@ import time
 import yaml
 import pika
 from pathlib import Path
-from typing import Dict, Optional, Any, List
+from typing import Dict, Optional, Any, List, Tuple
 from datetime import datetime, timedelta
 import requests
 from loguru import logger
@@ -26,6 +26,7 @@ class BitrixTaskHandler:
         
         # RabbitMQ Publisher для отправки успешных сообщений
         self.publisher = RabbitMQPublisher()
+        self._template_file_attachment_supported = True
         
         
         # Статистика
@@ -42,7 +43,10 @@ class BitrixTaskHandler:
             "templates_requested": 0,
             "templates_found": 0,
             "templates_not_found": 0,
-            "templates_api_errors": 0
+            "templates_api_errors": 0,
+            "template_files_found": 0,
+            "template_files_attached": 0,
+            "template_files_failed": 0
         }
 
         # Кэш параметров диаграмм Camunda -> Bitrix24
@@ -188,7 +192,10 @@ class BitrixTaskHandler:
                 return self._create_task_fallback(message_data)
             
             # Шаг 3: Формирование task_data из шаблона
-            task_data = self._build_task_data_from_template(template_data, message_data, task_id)
+            task_data, template_files = self._build_task_data_from_template(template_data, message_data, task_id)
+            if template_files:
+                self.stats["template_files_found"] += len(template_files)
+                logger.debug(f"Найдено {len(template_files)} файлов в шаблоне для дальнейшего прикрепления (task_id={task_id})")
             
             # Шаг 3.1: Добавление блока переменных процесса в описание задачи
             variables_block = self._build_process_variables_block(message_data, camunda_process_id, task_id)
@@ -207,10 +214,18 @@ class BitrixTaskHandler:
                 logger.error(f"Ошибка API Bitrix24 при создании задачи: {result['error']}")
                 return result
             
-            # Шаг 5: Если задача создана успешно, создаем чек-листы из шаблона
+            # Шаг 5: Если задача создана успешно, прикрепляем файлы и создаем чек-листы из шаблона
             if result and result.get('result') and result['result'].get('task'):
                 created_task_id = result['result']['task'].get('id')
                 if created_task_id:
+                    # Прикрепление файлов из шаблона к задаче
+                    if template_files:
+                        try:
+                            self._attach_files_to_task(int(created_task_id), template_files)
+                        except Exception as e:
+                            logger.error(f"Ошибка прикрепления файлов шаблона к задаче {created_task_id}: {e}")
+                            # Не прерываем выполнение, задача уже создана
+                    
                     checklists_data = self._extract_checklists_from_template(template_data)
                     
                     if checklists_data:
@@ -426,7 +441,7 @@ class BitrixTaskHandler:
         
         return str(value)
     
-    def _build_task_data_from_template(self, template_data: Dict[str, Any], message_data: Dict[str, Any], task_id: str) -> Dict[str, Any]:
+    def _build_task_data_from_template(self, template_data: Dict[str, Any], message_data: Dict[str, Any], task_id: str) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
         """
         Формирование task_data из шаблона задачи
         
@@ -439,6 +454,7 @@ class BitrixTaskHandler:
             Словарь task_data для создания задачи в Bitrix24
         """
         template = template_data.get('template', {})
+        template_files = template_data.get('files') or []
         members = template_data.get('members', {})
         tags = template_data.get('tags', [])
         metadata = message_data.get('metadata', {})
@@ -839,7 +855,85 @@ class BitrixTaskHandler:
         logger.debug(f"  TAGS: {task_data.get('TAGS', 'НЕТ')}")
         logger.debug(f"  Пользовательские поля: {list(user_fields.keys()) if user_fields else 'НЕТ'}")
         
-        return task_data
+        return task_data, template_files
+
+    def _build_template_files_block(self, files: List[Dict[str, Any]]) -> Optional[str]:
+        """
+        Формирование текстового блока с ссылками на файлы шаблона.
+        """
+        if not files:
+            return None
+        
+        base_url = self.config.webhook_url.split('/rest/')[0].rstrip('/')
+        lines: List[str] = ["Файлы из шаблона:"]
+        for index, file_entry in enumerate(files, start=1):
+            name = file_entry.get('NAME') or f"Файл {index}"
+            relative_url = file_entry.get('URL')
+            if not relative_url:
+                lines.append(f"{index}. {name}")
+                continue
+            full_url = f"{base_url}{relative_url}"
+            lines.append(f"{index}. {name}: {full_url}")
+        
+        return "\n".join(lines)
+
+    def _attach_files_to_task(self, task_id: int, files: List[Dict[str, Any]]) -> None:
+        """
+        Прикрепление файлов из шаблона к созданной задаче Bitrix24 через tasks.task.files.attach.
+        
+        Использует метод tasks.task.files.attach для прикрепления файлов диска к задаче.
+        Параметры:
+        - taskId: ID задачи
+        - fileId: ID файла из диска (OBJECT_ID из шаблона)
+        """
+        if not files:
+            logger.debug(f"Нет файлов для прикрепления к задаче {task_id}")
+            return
+        
+        api_url = f"{self.config.webhook_url.rstrip('/')}/tasks.task.files.attach.json"
+        
+        for file_entry in files:
+            object_id = file_entry.get('OBJECT_ID')
+            attached_id = file_entry.get('ID')
+            file_name = file_entry.get('NAME') or f"object_{object_id}"
+            
+            if not object_id:
+                logger.warning(f"Пропуск файла без OBJECT_ID в шаблоне (task_id={task_id}, file={file_entry})")
+                self.stats["template_files_failed"] += 1
+                continue
+            
+            payload = {
+                "taskId": task_id,
+                "fileId": object_id
+            }
+            
+            try:
+                logger.info(f"Прикрепление файла '{file_name}' (OBJECT_ID={object_id}, attachedId={attached_id}) к задаче {task_id}")
+                response = requests.post(api_url, data=payload, timeout=self.config.request_timeout)
+                
+                try:
+                    data = response.json()
+                except json.JSONDecodeError:
+                    self.stats["template_files_failed"] += 1
+                    logger.error(f"Некорректный JSON ответ при прикреплении файла '{file_name}' к задаче {task_id}: {response.text}")
+                    continue
+                
+                if response.status_code != 200 or data.get('error'):
+                    error_code = data.get('error')
+                    error_desc = data.get('error_description', data.get('error', 'Неизвестная ошибка'))
+                    logger.warning(f"Bitrix24 вернул ошибку при прикреплении файла '{file_name}' к задаче {task_id}: {error_desc}")
+                    self.stats["template_files_failed"] += 1
+                    continue
+                
+                self.stats["template_files_attached"] += 1
+                logger.info(f"✅ Файл '{file_name}' успешно прикреплён к задаче {task_id}")
+                
+            except requests.exceptions.RequestException as e:
+                self.stats["template_files_failed"] += 1
+                logger.error(f"Ошибка запроса при прикреплении файла '{file_name}' к задаче {task_id}: {e}")
+            except Exception as e:
+                self.stats["template_files_failed"] += 1
+                logger.error(f"Неожиданная ошибка при прикреплении файла '{file_name}' к задаче {task_id}: {e}")
     
     def _create_task_fallback(self, message_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
