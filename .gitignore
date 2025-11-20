@@ -300,3 +300,6 @@ metrics/
 test_*.*
 .cursor/
 tasktemplate_api/
+properties_api/
+userfield_api/
+archive/

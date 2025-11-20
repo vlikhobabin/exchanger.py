@@ -1,0 +1,41 @@
+name: Build Windows EXE
+
+on:
+  workflow_dispatch:  # Ручной запуск
+  push:
+    paths:
+      - 'bpmn/folder-helper/**'
+    branches:
+      - main
+      - master
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install flask pyinstaller
+        
+    - name: Build EXE
+      working-directory: bpmn/folder-helper
+      run: |
+        pyinstaller --noconsole --onefile --name folder-helper --hidden-import flask --hidden-import tkinter --hidden-import tkinter.filedialog folder-helper.py
+        
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: folder-helper-windows
+        path: bpmn/folder-helper/dist/folder-helper.exe
+        retention-days: 30
+
