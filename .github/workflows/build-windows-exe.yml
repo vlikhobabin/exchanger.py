@@ -4,7 +4,7 @@ on:
   workflow_dispatch:  # Ручной запуск
   push:
     paths:
-      - 'bpmn/folder-helper/**'
+      - 'folder-helper/**'
     branches:
       - main
       - master
@@ -18,7 +18,7 @@ jobs:
       uses: actions/checkout@v4
       
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.12'
         
@@ -28,14 +28,14 @@ jobs:
         pip install flask pyinstaller
         
     - name: Build EXE
-      working-directory: bpmn/folder-helper
+      working-directory: folder-helper
       run: |
         pyinstaller --noconsole --onefile --name folder-helper --hidden-import flask --hidden-import tkinter --hidden-import tkinter.filedialog folder-helper.py
         
     - name: Upload artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: folder-helper-windows
-        path: bpmn/folder-helper/dist/folder-helper.exe
+        path: folder-helper/dist/folder-helper.exe
         retention-days: 30
 
