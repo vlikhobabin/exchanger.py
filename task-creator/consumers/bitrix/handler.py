@@ -51,6 +51,9 @@ class BitrixTaskHandler:
 
         # Кэш параметров диаграмм Camunda -> Bitrix24
         self.diagram_properties_cache: Dict[str, List[Dict[str, Any]]] = {}
+        
+        # КРИТИЧЕСКАЯ ПРОВЕРКА: Проверяем существование обязательного поля UF_CAMUNDA_ID_EXTERNAL_TASK
+        self._check_required_user_field()
     
     def process_message(self, message_data: Dict[str, Any], properties: Any) -> bool:
         """
@@ -162,6 +165,8 @@ class BitrixTaskHandler:
             existing_task = self._find_task_by_external_id(task_id)
             
             if existing_task:
+                # Задача уже существует - возвращаем её (идемпотентность)
+                # Поле UF_CAMUNDA_ID_EXTERNAL_TASK должно быть уникальным и соответствовать 1 задаче в ExternalTask
                 logger.warning(f"Задача с UF_CAMUNDA_ID_EXTERNAL_TASK={task_id} уже существует в Bitrix24 (ID: {existing_task['id']})")
                 logger.warning(f"Это повторная попытка создания. Возвращаем существующую задачу.")
                 
@@ -2597,6 +2602,243 @@ class BitrixTaskHandler:
         except Exception as e:
             logger.error(f"Неожиданная ошибка при запросе руководителя для userId={user_id}: {e}")
             return None
+    
+    def _check_required_user_field(self) -> None:
+        """
+        КРИТИЧЕСКАЯ ПРОВЕРКА: Проверяет существование всех обязательных пользовательских полей
+        для объекта TASKS_TASK в Bitrix24.
+        
+        Обязательные поля:
+        - UF_CAMUNDA_ID_EXTERNAL_TASK (string) - уникальный идентификатор External Task из Camunda
+        - UF_RESULT_ANSWER (enumeration) - ответ пользователя на вопрос задачи
+        - UF_RESULT_QUESTION (string) - вопрос для задачи, требующей ответа
+        - UF_RESULT_EXPECTED (boolean) - флаг, требуется ли ответ от пользователя
+        
+        Если хотя бы одно поле отсутствует - останавливает сервис с фатальной ошибкой.
+        Все поля должны быть созданы администратором вручную перед запуском сервиса.
+        
+        Raises:
+            SystemExit: Если хотя бы одно поле не найдено - останавливает сервис
+        """
+        # Список обязательных полей с их ожидаемыми типами
+        required_fields = {
+            "UF_CAMUNDA_ID_EXTERNAL_TASK": {
+                "type": "string",
+                "description": "Уникальный идентификатор External Task из Camunda"
+            },
+            "UF_RESULT_ANSWER": {
+                "type": "enumeration",
+                "description": "Ответ пользователя на вопрос задачи"
+            },
+            "UF_RESULT_QUESTION": {
+                "type": "string",
+                "description": "Вопрос для задачи, требующей ответа"
+            },
+            "UF_RESULT_EXPECTED": {
+                "type": "boolean",
+                "description": "Флаг, требуется ли ответ от пользователя"
+            }
+        }
+        
+        try:
+            logger.info("Проверка существования обязательных пользовательских полей в Bitrix24...")
+            logger.info(f"Ожидаемые поля: {', '.join(required_fields.keys())}")
+            
+            user_fields = None
+            
+            # Пробуем использовать API через webhook (как в userfield_sync.py)
+            # Метод: imena.camunda.userfield.list
+            try:
+                api_url = f"{self.config.webhook_url}/imena.camunda.userfield.list"
+                logger.debug(f"Попытка проверки через webhook API: {api_url}")
+                
+                response = requests.get(api_url, timeout=self.config.request_timeout)
+                response.raise_for_status()
+                result = response.json()
+                
+                # Проверяем наличие ошибок
+                if 'error' in result:
+                    logger.warning(f"Webhook API вернул ошибку: {result.get('error', {}).get('error_description', 'Unknown error')}")
+                    raise requests.exceptions.RequestException("Webhook API error")
+                
+                # Извлекаем список полей
+                api_data = result.get('result', {})
+                user_fields = api_data.get('userFields', [])
+                logger.debug(f"Получено {len(user_fields)} полей через webhook API")
+                
+            except (requests.exceptions.RequestException, KeyError) as e:
+                logger.warning(f"Не удалось получить поля через webhook API: {e}")
+                logger.info("Попытка использовать прямой API файл...")
+                
+                # Fallback: используем прямой API файл
+                # Извлекаем базовый домен из webhook URL
+                try:
+                    from urllib.parse import urlparse
+                    webhook_parsed = urlparse(self.config.webhook_url)
+                    base_domain = f"{webhook_parsed.scheme}://{webhook_parsed.netloc}"
+                    direct_api_url = f"{base_domain}/local/modules/imena.camunda/lib/UserFields/userfields_api.php?api=1&method=list"
+                    
+                    logger.debug(f"Попытка проверки через прямой API файл: {direct_api_url}")
+                    
+                    response = requests.get(direct_api_url, timeout=self.config.request_timeout, verify=False)
+                    response.raise_for_status()
+                    result = response.json()
+                    
+                    if result.get('status') == 'success':
+                        api_data = result.get('data', {})
+                        user_fields = api_data.get('userFields', [])
+                        logger.debug(f"Получено {len(user_fields)} полей через прямой API файл")
+                    else:
+                        raise requests.exceptions.RequestException("Direct API returned error")
+                        
+                except Exception as e2:
+                    logger.error(f"Не удалось получить поля через прямой API файл: {e2}")
+                    raise
+            
+            if user_fields is None or len(user_fields) == 0:
+                logger.error("=" * 80)
+                logger.error("ФАТАЛЬНАЯ ОШИБКА: Не удалось получить список полей из Bitrix24!")
+                logger.error("=" * 80)
+                logger.error("")
+                logger.error("ДЕЙСТВИЯ:")
+                logger.error("1. Проверьте доступность Bitrix24 API")
+                logger.error("2. Проверьте правильность BITRIX_WEBHOOK_URL в конфигурации")
+                logger.error("3. Убедитесь, что модуль imena.camunda установлен и активен")
+                logger.error("4. Перезапустите сервис после исправления")
+                logger.error("")
+                raise SystemExit(1)
+            
+            # Создаем словарь найденных полей для быстрого поиска
+            found_fields = {}
+            for field in user_fields:
+                field_name = field.get('FIELD_NAME')
+                if field_name:
+                    found_fields[field_name] = {
+                        'ID': field.get('ID', 'unknown'),
+                        'USER_TYPE_ID': field.get('USER_TYPE_ID', 'unknown'),
+                        'field_data': field
+                    }
+            
+            # Проверяем каждое обязательное поле
+            missing_fields = []
+            incorrect_type_fields = []
+            
+            for field_name, field_info in required_fields.items():
+                expected_type = field_info['type']
+                description = field_info['description']
+                
+                if field_name not in found_fields:
+                    missing_fields.append({
+                        'name': field_name,
+                        'type': expected_type,
+                        'description': description
+                    })
+                else:
+                    actual_type = found_fields[field_name]['USER_TYPE_ID']
+                    field_id = found_fields[field_name]['ID']
+                    
+                    # Проверяем соответствие типа (с учетом возможных вариантов)
+                    type_mapping = {
+                        'string': ['string', 'text'],
+                        'enumeration': ['enumeration', 'enum'],
+                        'boolean': ['boolean', 'bool']
+                    }
+                    
+                    expected_types = type_mapping.get(expected_type, [expected_type])
+                    if actual_type.lower() not in [t.lower() for t in expected_types]:
+                        incorrect_type_fields.append({
+                            'name': field_name,
+                            'expected': expected_type,
+                            'actual': actual_type,
+                            'id': field_id
+                        })
+                        logger.warning(f"⚠️  Поле {field_name} найдено, но имеет неверный тип: ожидается '{expected_type}', фактически '{actual_type}' (ID: {field_id})")
+                    else:
+                        logger.info(f"✅ Поле {field_name} найдено (ID: {field_id}, тип: {actual_type}) - {description}")
+            
+            # Если есть отсутствующие поля или поля с неверным типом - останавливаем сервис
+            if missing_fields or incorrect_type_fields:
+                logger.error("=" * 80)
+                logger.error("ФАТАЛЬНАЯ ОШИБКА: Обязательные поля отсутствуют или имеют неверный тип!")
+                logger.error("=" * 80)
+                logger.error("")
+                
+                if missing_fields:
+                    logger.error("ОТСУТСТВУЮЩИЕ ПОЛЯ:")
+                    for field in missing_fields:
+                        logger.error(f"  ❌ {field['name']} (тип: {field['type']})")
+                        logger.error(f"     Описание: {field['description']}")
+                    logger.error("")
+                
+                if incorrect_type_fields:
+                    logger.error("ПОЛЯ С НЕВЕРНЫМ ТИПОМ:")
+                    for field in incorrect_type_fields:
+                        logger.error(f"  ⚠️  {field['name']} (ID: {field['id']})")
+                        logger.error(f"     Ожидается: {field['expected']}, фактически: {field['actual']}")
+                    logger.error("")
+                
+                logger.error("ДЕЙСТВИЯ:")
+                logger.error("1. Создайте отсутствующие пользовательские поля в Bitrix24:")
+                logger.error("   Объект: Задачи (TASKS_TASK)")
+                logger.error("")
+                
+                for field in missing_fields:
+                    logger.error(f"   - {field['name']}:")
+                    logger.error(f"     * Тип: {field['type']}")
+                    logger.error(f"     * Описание: {field['description']}")
+                    if field['name'] == 'UF_CAMUNDA_ID_EXTERNAL_TASK':
+                        logger.error("     * Обязательное: Нет (но должно быть уникальным)")
+                    logger.error("")
+                
+                if incorrect_type_fields:
+                    logger.error("2. Исправьте типы полей с неверным типом:")
+                    for field in incorrect_type_fields:
+                        logger.error(f"   - {field['name']}: измените тип с '{field['actual']}' на '{field['expected']}'")
+                    logger.error("")
+                
+                logger.error("3. Перезапустите сервис после создания/исправления полей")
+                logger.error("4. Только после этого сервис сможет корректно работать")
+                logger.error("")
+                logger.error("БЕЗ ВСЕХ ОБЯЗАТЕЛЬНЫХ ПОЛЕЙ СЕРВИС НЕ МОЖЕТ РАБОТАТЬ КОРРЕКТНО!")
+                logger.error("=" * 80)
+                raise SystemExit(1)
+            
+            logger.info("✅ Все обязательные пользовательские поля найдены и имеют корректные типы")
+                
+        except requests.exceptions.RequestException as e:
+            logger.error("=" * 80)
+            logger.error("ФАТАЛЬНАЯ ОШИБКА: Не удалось подключиться к Bitrix24 API!")
+            logger.error("=" * 80)
+            logger.error("")
+            logger.error(f"Ошибка подключения: {e}")
+            logger.error("")
+            logger.error("ДЕЙСТВИЯ:")
+            logger.error("1. Проверьте доступность Bitrix24")
+            logger.error("2. Проверьте правильность BITRIX_WEBHOOK_URL в конфигурации")
+            logger.error("3. Убедитесь, что API метод imena.camunda.userfield.list доступен")
+            logger.error("4. Перезапустите сервис после исправления")
+            logger.error("")
+            raise SystemExit(1)
+        except SystemExit:
+            # Пробрасываем SystemExit дальше
+            raise
+        except Exception as e:
+            logger.error("=" * 80)
+            logger.error("ФАТАЛЬНАЯ ОШИБКА: Неожиданная ошибка при проверке обязательных полей!")
+            logger.error("=" * 80)
+            logger.error("")
+            logger.error(f"Ошибка: {e}")
+            logger.error("")
+            logger.error("ДЕЙСТВИЯ:")
+            logger.error("1. Проверьте логи для деталей")
+            logger.error("2. Убедитесь, что все обязательные поля созданы в Bitrix24:")
+            logger.error("   - UF_CAMUNDA_ID_EXTERNAL_TASK (string)")
+            logger.error("   - UF_RESULT_ANSWER (enumeration)")
+            logger.error("   - UF_RESULT_QUESTION (string)")
+            logger.error("   - UF_RESULT_EXPECTED (boolean)")
+            logger.error("3. Перезапустите сервис после исправления")
+            logger.error("")
+            raise SystemExit(1)
     
     def _find_task_by_external_id(self, external_task_id: str) -> Optional[Dict[str, Any]]:
         """

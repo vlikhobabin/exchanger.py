@@ -565,7 +565,8 @@ class UniversalCamundaWorker:
                 
                 # Проверяем, требуется ли ответ от пользователя по полю ufResultExpected
                 # Это поле устанавливается при создании задачи на основе UF_RESULT_EXPECTED из metadata
-                uf_result_expected = task_data.get("ufResultExpected")
+                # Поддерживаем оба формата: camelCase (ufResultExpected) и UPPER_CASE (UF_RESULT_EXPECTED)
+                uf_result_expected = task_data.get("ufResultExpected") or task_data.get("UF_RESULT_EXPECTED")
                 
                 # Задача требует ответа только если ufResultExpected равно "1" (Y в Bitrix24)
                 if uf_result_expected == "1":
@@ -613,43 +614,76 @@ class UniversalCamundaWorker:
             # Извлекаем данные задачи (например, от Bitrix24)
             task_data = result.get("task", {})
             if task_data:
-                # Основные данные задачи
-                if "ID" in task_data:
-                    variables["bitrix_task_id"] = str(task_data["ID"])
-                if "TITLE" in task_data:
-                    variables["bitrix_task_title"] = str(task_data["TITLE"])
-                if "DESCRIPTION" in task_data:
-                    variables["bitrix_task_description"] = str(task_data["DESCRIPTION"])
-                if "STATUS" in task_data:
-                    variables["bitrix_task_status"] = str(task_data["STATUS"])
-                if "PRIORITY" in task_data:
-                    variables["bitrix_task_priority"] = str(task_data["PRIORITY"])
+                # Вспомогательная функция для получения значения с поддержкой обоих регистров
+                def get_field(key_upper: str, key_lower: str = None) -> Any:
+                    """Получает значение поля, проверяя оба регистра"""
+                    if key_lower is None:
+                        # Автоматически создаем camelCase версию из UPPER_CASE
+                        # ID -> id, TITLE -> title, CREATED_DATE -> createdDate
+                        key_lower = key_upper.lower()
+                        if '_' in key_upper:
+                            # Для полей с подчеркиванием: CREATED_DATE -> createdDate
+                            parts = key_upper.lower().split('_')
+                            key_lower = parts[0] + ''.join(p.capitalize() for p in parts[1:])
+                    return task_data.get(key_upper) or task_data.get(key_lower)
+                
+                # Основные данные задачи (поддержка обоих регистров)
+                task_id = get_field("ID", "id")
+                if task_id:
+                    variables["bitrix_task_id"] = str(task_id)
+                
+                task_title = get_field("TITLE", "title")
+                if task_title:
+                    variables["bitrix_task_title"] = str(task_title)
+                
+                task_description = get_field("DESCRIPTION", "description")
+                if task_description:
+                    variables["bitrix_task_description"] = str(task_description)
+                
+                task_status = get_field("STATUS", "status")
+                if task_status:
+                    variables["bitrix_task_status"] = str(task_status)
+                
+                task_priority = get_field("PRIORITY", "priority")
+                if task_priority:
+                    variables["bitrix_task_priority"] = str(task_priority)
                 
                 # Даты
-                if "CREATED_DATE" in task_data:
-                    variables["bitrix_task_created_date"] = str(task_data["CREATED_DATE"])
-                if "CHANGED_DATE" in task_data:
-                    variables["bitrix_task_changed_date"] = str(task_data["CHANGED_DATE"])
-                if "DEADLINE" in task_data:
-                    variables["bitrix_task_deadline"] = str(task_data["DEADLINE"])
+                created_date = get_field("CREATED_DATE", "createdDate")
+                if created_date:
+                    variables["bitrix_task_created_date"] = str(created_date)
+                
+                changed_date = get_field("CHANGED_DATE", "changedDate")
+                if changed_date:
+                    variables["bitrix_task_changed_date"] = str(changed_date)
+                
+                deadline = get_field("DEADLINE", "deadline")
+                if deadline:
+                    variables["bitrix_task_deadline"] = str(deadline)
                 
                 # Пользователи
-                if "CREATED_BY" in task_data:
-                    variables["bitrix_task_created_by"] = str(task_data["CREATED_BY"])
-                if "RESPONSIBLE_ID" in task_data:
-                    variables["bitrix_task_responsible_id"] = str(task_data["RESPONSIBLE_ID"])
+                created_by = get_field("CREATED_BY", "createdBy")
+                if created_by:
+                    variables["bitrix_task_created_by"] = str(created_by)
+                
+                responsible_id = get_field("RESPONSIBLE_ID", "responsibleId")
+                if responsible_id:
+                    variables["bitrix_task_responsible_id"] = str(responsible_id)
                 
                 # Дополнительные данные
-                if "GROUP_ID" in task_data:
-                    variables["bitrix_task_group_id"] = str(task_data["GROUP_ID"])
-                if "PARENT_ID" in task_data:
-                    variables["bitrix_task_parent_id"] = str(task_data["PARENT_ID"])
+                group_id = get_field("GROUP_ID", "groupId")
+                if group_id:
+                    variables["bitrix_task_group_id"] = str(group_id)
+                
+                parent_id = get_field("PARENT_ID", "parentId")
+                if parent_id:
+                    variables["bitrix_task_parent_id"] = str(parent_id)
                 
                 # НЕ добавляем пользовательские поля (UF_) в переменные процесса,
                 # так как они специфичны для конкретной задачи и не должны влиять на весь процесс
                 # УДаляем закомментированную секцию "Пользовательские поля (UF_)"
                 
-                logger.info(f"Извлечены данные задачи Bitrix24: ID={task_data.get('ID')}, Title={task_data.get('TITLE')}")
+                logger.info(f"Извлечены данные задачи Bitrix24: ID={task_id}, Title={task_title}")
             
             # НЕ извлекаем системные данные из result в переменные процесса
             # так как они не нужны для логики процесса
