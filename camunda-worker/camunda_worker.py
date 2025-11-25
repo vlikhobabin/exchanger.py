@@ -636,48 +636,9 @@ class UniversalCamundaWorker:
                 if task_title:
                     variables["bitrix_task_title"] = str(task_title)
                 
-                task_description = get_field("DESCRIPTION", "description")
-                if task_description:
-                    variables["bitrix_task_description"] = str(task_description)
-                
                 task_status = get_field("STATUS", "status")
                 if task_status:
                     variables["bitrix_task_status"] = str(task_status)
-                
-                task_priority = get_field("PRIORITY", "priority")
-                if task_priority:
-                    variables["bitrix_task_priority"] = str(task_priority)
-                
-                # Даты
-                created_date = get_field("CREATED_DATE", "createdDate")
-                if created_date:
-                    variables["bitrix_task_created_date"] = str(created_date)
-                
-                changed_date = get_field("CHANGED_DATE", "changedDate")
-                if changed_date:
-                    variables["bitrix_task_changed_date"] = str(changed_date)
-                
-                deadline = get_field("DEADLINE", "deadline")
-                if deadline:
-                    variables["bitrix_task_deadline"] = str(deadline)
-                
-                # Пользователи
-                created_by = get_field("CREATED_BY", "createdBy")
-                if created_by:
-                    variables["bitrix_task_created_by"] = str(created_by)
-                
-                responsible_id = get_field("RESPONSIBLE_ID", "responsibleId")
-                if responsible_id:
-                    variables["bitrix_task_responsible_id"] = str(responsible_id)
-                
-                # Дополнительные данные
-                group_id = get_field("GROUP_ID", "groupId")
-                if group_id:
-                    variables["bitrix_task_group_id"] = str(group_id)
-                
-                parent_id = get_field("PARENT_ID", "parentId")
-                if parent_id:
-                    variables["bitrix_task_parent_id"] = str(parent_id)
                 
                 # НЕ добавляем пользовательские поля (UF_) в переменные процесса,
                 # так как они специфичны для конкретной задачи и не должны влиять на весь процесс

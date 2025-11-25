@@ -46,11 +46,18 @@ class BitrixTaskHandler:
             "templates_api_errors": 0,
             "template_files_found": 0,
             "template_files_attached": 0,
-            "template_files_failed": 0
+            "template_files_failed": 0,
+            "dependencies_attempted": 0,
+            "dependencies_created": 0,
+            "dependencies_failed": 0
         }
 
         # Кэш параметров диаграмм Camunda -> Bitrix24
         self.diagram_properties_cache: Dict[str, List[Dict[str, Any]]] = {}
+        self.diagram_details_cache: Dict[str, Dict[str, Any]] = {}
+        self.element_predecessors_cache: Dict[Tuple[Optional[str], Optional[str], str], List[str]] = {}
+        self.responsible_cache: Dict[Tuple[Optional[str], Optional[str], str], Optional[Dict[str, Any]]] = {}
+        self.element_task_cache: Dict[str, Dict[str, Any]] = {}
         
         # КРИТИЧЕСКАЯ ПРОВЕРКА: Проверяем существование обязательного поля UF_CAMUNDA_ID_EXTERNAL_TASK
         self._check_required_user_field()
@@ -182,22 +189,59 @@ class BitrixTaskHandler:
                 }
             
             # Шаг 2: Получение шаблона задачи через API
-            camunda_process_id, element_id = self._extract_template_params(message_data)
+            camunda_process_id, element_id, diagram_id = self._extract_template_params(message_data)
             
             if not camunda_process_id or not element_id:
                 logger.warning(f"Не удалось извлечь параметры для запроса шаблона (camundaProcessId={camunda_process_id}, elementId={element_id})")
                 logger.warning("Переход к fallback: создание задачи с минимальными данными")
                 return self._create_task_fallback(message_data)
             
-            template_data = self._get_task_template(camunda_process_id, element_id)
+            responsible_info = self._get_responsible_info(camunda_process_id, diagram_id, element_id)
+            responsible_template_id = None
+            if responsible_info:
+                responsible_template_id = (
+                    responsible_info.get('TEMPLATE_ID') or
+                    responsible_info.get('templateId')
+                )
+            diagram_id_from_responsible = None
+            if responsible_info:
+                diagram_id_from_responsible = (
+                    responsible_info.get('DIAGRAM_ID') or
+                    responsible_info.get('diagramId')
+                )
+            
+            template_data = self._get_task_template(
+                camunda_process_id,
+                element_id,
+                template_id=responsible_template_id
+            )
             
             if not template_data:
                 # Шаблон не найден - используем fallback
                 logger.warning(f"Шаблон не найден для camundaProcessId={camunda_process_id}, elementId={element_id}. Переход к fallback")
+                if responsible_template_id:
+                    logger.warning(
+                        f"Для elementId={element_id} найден TEMPLATE_ID={responsible_template_id}, "
+                        "но imena.camunda.tasktemplate.get не вернул шаблон. Проверьте настройки Bitrix24."
+                    )
                 return self._create_task_fallback(message_data)
+
+            diagram_id = self._resolve_diagram_id(
+                diagram_id,
+                camunda_process_id,
+                metadata,
+                template_data
+            )
+            if not diagram_id and diagram_id_from_responsible:
+                diagram_id = diagram_id_from_responsible
             
             # Шаг 3: Формирование task_data из шаблона
-            task_data, template_files = self._build_task_data_from_template(template_data, message_data, task_id)
+            task_data, template_files = self._build_task_data_from_template(
+                template_data,
+                message_data,
+                task_id,
+                element_id
+            )
             if template_files:
                 self.stats["template_files_found"] += len(template_files)
                 logger.debug(f"Найдено {len(template_files)} файлов в шаблоне для дальнейшего прикрепления (task_id={task_id})")
@@ -211,6 +255,15 @@ class BitrixTaskHandler:
                 else:
                     task_data['DESCRIPTION'] = variables_block
                 logger.debug(f"Добавлен блок переменных процесса в описание задачи {task_id}")
+
+            # Шаг 3.2: Добавление списка предшественников
+            predecessor_task_ids = self._apply_predecessor_dependencies(
+                task_data,
+                camunda_process_id,
+                diagram_id,
+                element_id,
+                responsible_info=responsible_info
+            )
             
             # Шаг 4: Создание задачи в Bitrix24
             result = self._send_task_to_bitrix(task_data)
@@ -230,6 +283,12 @@ class BitrixTaskHandler:
                         except Exception as e:
                             logger.error(f"Ошибка прикрепления файлов шаблона к задаче {created_task_id}: {e}")
                             # Не прерываем выполнение, задача уже создана
+                    
+                    # Создаем зависимости через кастомный REST API
+                    try:
+                        self._create_task_dependencies(int(created_task_id), predecessor_task_ids)
+                    except Exception as e:
+                        logger.error(f"Ошибка создания зависимостей для задачи {created_task_id}: {e}")
                     
                     checklists_data = self._extract_checklists_from_template(template_data)
                     
@@ -364,9 +423,12 @@ class BitrixTaskHandler:
             if not result.get('success'):
                 logger.warning(f"Bitrix24 вернул пустой список параметров для процесса {camunda_process_id}: {result.get('error')}")
                 self.diagram_properties_cache[camunda_process_id] = []
+                self.diagram_details_cache[camunda_process_id] = {}
                 return []
             
             properties_data = result.get('data', {})
+            diagram_info = properties_data.get('diagram') or {}
+            self.diagram_details_cache[camunda_process_id] = diagram_info
             properties = properties_data.get('properties', [])
             if isinstance(properties, list):
                 self.diagram_properties_cache[camunda_process_id] = properties
@@ -375,6 +437,8 @@ class BitrixTaskHandler:
             
             logger.warning(f"Неожиданный формат списка параметров для процесса {camunda_process_id}")
             self.diagram_properties_cache[camunda_process_id] = []
+            if camunda_process_id not in self.diagram_details_cache:
+                self.diagram_details_cache[camunda_process_id] = {}
             return []
         
         except requests.exceptions.Timeout:
@@ -387,7 +451,347 @@ class BitrixTaskHandler:
             logger.error(f"Неожиданная ошибка при запросе параметров диаграммы {camunda_process_id}: {e}")
         
         self.diagram_properties_cache[camunda_process_id] = []
+        self.diagram_details_cache[camunda_process_id] = {}
         return []
+
+    def _resolve_diagram_id(
+        self,
+        diagram_id: Optional[str],
+        camunda_process_id: Optional[str],
+        metadata: Optional[Dict[str, Any]],
+        template_data: Optional[Dict[str, Any]]
+    ) -> Optional[str]:
+        """
+        Попытка определить ID диаграммы Storm различными способами.
+        """
+        if diagram_id:
+            resolved = str(diagram_id)
+            logger.debug(f"diagramId извлечён из входных данных: {resolved}")
+            return resolved
+
+        metadata = metadata or {}
+        process_properties = metadata.get('processProperties', {})
+        if isinstance(process_properties, dict):
+            for key in ('diagramId', 'diagram_id', 'diagramID', 'stormDiagramId'):
+                value = process_properties.get(key)
+                if value:
+                    resolved = str(value)
+                    logger.debug(f"diagramId найден в processProperties[{key}]: {resolved}")
+                    return resolved
+
+        diagram_meta = metadata.get('diagram', {})
+        if isinstance(diagram_meta, dict):
+            for key in ('id', 'ID'):
+                value = diagram_meta.get(key)
+                if value:
+                    resolved = str(value)
+                    logger.debug(f"diagramId найден в metadata.diagram.{key}: {resolved}")
+                    return resolved
+
+        template_meta = (template_data or {}).get('meta', {})
+        if isinstance(template_meta, dict):
+            for key in ('diagramId', 'diagram_id', 'diagramID'):
+                value = template_meta.get(key)
+                if value:
+                    resolved = str(value)
+                    logger.debug(f"diagramId найден в template.meta[{key}]: {resolved}")
+                    return resolved
+
+        if camunda_process_id:
+            # Вызываем API параметров диаграммы, чтобы заполнить кэш
+            self._get_diagram_properties(camunda_process_id)
+            cached_info = self.diagram_details_cache.get(camunda_process_id) or {}
+            value = cached_info.get('ID') or cached_info.get('id')
+            if value:
+                resolved = str(value)
+                logger.debug(f"diagramId получен из кэша параметров диаграммы: {resolved}")
+                return resolved
+
+        logger.debug("diagramId не удалось определить по доступным данным")
+        return None
+
+    def _get_responsible_info(
+        self,
+        camunda_process_id: Optional[str],
+        diagram_id: Optional[str],
+        element_id: Optional[str]
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Получение полной записи ответственого элемента диаграммы.
+        """
+        if not element_id:
+            return None
+
+        cache_key = (camunda_process_id, diagram_id, element_id)
+        if cache_key in self.responsible_cache:
+            return self.responsible_cache[cache_key]
+
+        if not camunda_process_id and not diagram_id:
+            logger.debug("Пропуск запроса ответственного: отсутствуют camundaProcessId и diagramId")
+            self.responsible_cache[cache_key] = None
+            return None
+
+        api_url = f"{self.config.webhook_url.rstrip('/')}/imena.camunda.diagram.responsible.get"
+        params = {
+            'elementId': element_id
+        }
+        if camunda_process_id:
+            params['camundaProcessId'] = camunda_process_id
+        elif diagram_id:
+            params['diagramId'] = diagram_id
+
+        try:
+            logger.debug(f"Запрос ответственного элемента: camundaProcessId={camunda_process_id}, diagramId={diagram_id}, elementId={element_id}")
+            response = requests.get(api_url, params=params, timeout=self.config.request_timeout)
+            response.raise_for_status()
+            data = response.json()
+
+            result = data.get('result', {})
+            if not result.get('success'):
+                logger.warning(f"Bitrix24 вернул ошибку при получении ответственного elementId={element_id}: {result.get('error')}")
+                self.responsible_cache[cache_key] = None
+                return None
+
+            responsible = result.get('data', {}).get('responsible')
+            if responsible:
+                self.responsible_cache[cache_key] = responsible
+                return responsible
+
+            logger.debug(f"Ответственный elementId={element_id} не найден")
+            self.responsible_cache[cache_key] = None
+            return None
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Ошибка запроса ответственного elementId={element_id}: {e}")
+        except json.JSONDecodeError as e:
+            logger.error(f"Ошибка декодирования ответа ответственного elementId={element_id}: {e}")
+        except Exception as e:
+            logger.error(f"Неожиданная ошибка при получении ответственного elementId={element_id}: {e}")
+
+        self.responsible_cache[cache_key] = None
+        return None
+
+    def _get_element_predecessor_ids(
+        self,
+        camunda_process_id: Optional[str],
+        diagram_id: Optional[str],
+        element_id: Optional[str],
+        responsible_info: Optional[Dict[str, Any]] = None
+    ) -> List[str]:
+        """
+        Получение списка ID элементов-предшественников для указанного элемента диаграммы.
+        """
+        if not element_id:
+            return []
+        if not camunda_process_id and not diagram_id:
+            logger.debug("Пропуск запроса предшественников: отсутствуют camundaProcessId и diagramId")
+            return []
+
+        cache_key = (camunda_process_id, diagram_id, element_id)
+        if cache_key in self.element_predecessors_cache:
+            return self.element_predecessors_cache[cache_key]
+
+        if not responsible_info:
+            responsible_info = self._get_responsible_info(camunda_process_id, diagram_id, element_id)
+
+        if not responsible_info:
+            self.element_predecessors_cache[cache_key] = []
+            return []
+
+        raw_predecessors = responsible_info.get('PREDECESSOR_IDS', [])
+        normalized: List[str] = []
+
+        if isinstance(raw_predecessors, list):
+            normalized = [str(item).strip() for item in raw_predecessors if item]
+        elif isinstance(raw_predecessors, str):
+            raw_predecessors = raw_predecessors.strip()
+            if raw_predecessors.startswith('['):
+                try:
+                    parsed = json.loads(raw_predecessors)
+                    if isinstance(parsed, list):
+                        normalized = [str(item).strip() for item in parsed if item]
+                except json.JSONDecodeError:
+                    logger.warning(f"Не удалось распарсить PREDECESSOR_IDS как JSON: {raw_predecessors}")
+            elif raw_predecessors:
+                normalized = [raw_predecessors]
+        elif raw_predecessors:
+            normalized = [str(raw_predecessors).strip()]
+
+        normalized = [pid for pid in normalized if pid]
+        if normalized:
+            logger.info(f"Получено {len(normalized)} предшественников для elementId={element_id}")
+        else:
+            logger.debug(f"Предшественники для elementId={element_id} отсутствуют")
+
+        self.element_predecessors_cache[cache_key] = normalized
+        return normalized
+
+    def _apply_predecessor_dependencies(
+        self,
+        task_data: Dict[str, Any],
+        camunda_process_id: Optional[str],
+        diagram_id: Optional[str],
+        element_id: Optional[str],
+        responsible_info: Optional[Dict[str, Any]] = None
+    ) -> List[int]:
+        """
+        Добавляет сведения о задачах-предшественниках в task_data, если они найдены.
+        """
+        if not element_id:
+            logger.debug("Пропуск добавления предшественников: отсутствует elementId")
+            return []
+
+        predecessor_elements = self._get_element_predecessor_ids(
+            camunda_process_id,
+            diagram_id,
+            element_id,
+            responsible_info=responsible_info
+        )
+        if not predecessor_elements:
+            return []
+
+        dependencies: List[Dict[str, Any]] = []
+        missing_elements: List[str] = []
+        predecessor_task_ids: List[int] = []
+
+        for predecessor_element_id in predecessor_elements:
+            existing_task = self._find_task_by_element_id(predecessor_element_id)
+            if not existing_task:
+                missing_elements.append(predecessor_element_id)
+                continue
+
+            bitrix_task_id = existing_task.get('id') or existing_task.get('ID')
+            try:
+                bitrix_task_int = int(bitrix_task_id)
+            except (ValueError, TypeError):
+                logger.warning(f"Некорректный ID задачи для предшественника {predecessor_element_id}: {bitrix_task_id}")
+                continue
+
+            dependencies.append({
+                'DEPENDS_ON_ID': bitrix_task_int,
+                'TYPE': 2  # Finish-Start зависимость
+            })
+            predecessor_task_ids.append(bitrix_task_int)
+
+        if dependencies:
+            existing = task_data.get('SE_PROJECTDEPENDENCE')
+            if isinstance(existing, list):
+                existing.extend(dependencies)
+            elif existing:
+                logger.warning("Поле SE_PROJECTDEPENDENCE имеет неожиданный формат, будет перезаписано")
+                task_data['SE_PROJECTDEPENDENCE'] = dependencies
+            else:
+                task_data['SE_PROJECTDEPENDENCE'] = dependencies
+            logger.info(f"Добавлено {len(dependencies)} предшественников для elementId={element_id}")
+
+        if missing_elements:
+            logger.warning(f"Не найдены задачи в Bitrix24 для предшественников: {missing_elements}")
+
+        return predecessor_task_ids
+
+    def _create_task_dependencies(self, task_id: int, predecessor_ids: List[int]) -> None:
+        """
+        Создание зависимостей задач через кастомный REST API Bitrix24.
+        """
+        if not predecessor_ids:
+            return
+
+        api_url = f"{self.config.webhook_url.rstrip('/')}/imena.camunda.task.dependency.add"
+        unique_predecessors: List[int] = []
+        for predecessor_id in predecessor_ids:
+            if predecessor_id == task_id:
+                logger.warning(f"Предшественник совпадает с текущей задачей ({task_id}), пропуск")
+                continue
+            if predecessor_id not in unique_predecessors:
+                unique_predecessors.append(predecessor_id)
+
+        for predecessor_id in unique_predecessors:
+            payload = {
+                "taskId": task_id,
+                "dependsOnId": predecessor_id
+            }
+
+            try:
+                self.stats["dependencies_attempted"] += 1
+                response = requests.post(
+                    api_url,
+                    json=payload,
+                    timeout=self.config.request_timeout
+                )
+                response.raise_for_status()
+                data = response.json()
+
+                result = data.get('result', {})
+                if result.get('success'):
+                    self.stats["dependencies_created"] += 1
+                    logger.info(f"✅ Добавлена зависимость: задача {task_id} зависит от {predecessor_id}")
+                else:
+                    self.stats["dependencies_failed"] += 1
+                    error_msg = result.get('error') or result.get('message') or 'unknown error'
+                    logger.warning(
+                        f"Не удалось добавить зависимость taskId={task_id} -> dependsOnId={predecessor_id}: {error_msg}"
+                    )
+
+            except requests.exceptions.RequestException as e:
+                self.stats["dependencies_failed"] += 1
+                logger.error(
+                    f"Ошибка запроса при добавлении зависимости taskId={task_id} -> dependsOnId={predecessor_id}: {e}"
+                )
+            except json.JSONDecodeError as e:
+                self.stats["dependencies_failed"] += 1
+                logger.error(
+                    f"Ошибка декодирования ответа при добавлении зависимости taskId={task_id}: {e}"
+                )
+            except Exception as e:
+                self.stats["dependencies_failed"] += 1
+                logger.error(
+                    f"Неожиданная ошибка при добавлении зависимости taskId={task_id}: {e}"
+                )
+
+    def _find_task_by_element_id(self, element_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        """
+        Поиск задачи в Bitrix24 по значению пользовательского поля UF_ELEMENT_ID.
+        """
+        if not element_id:
+            return None
+
+        if element_id in self.element_task_cache:
+            return self.element_task_cache[element_id]
+
+        try:
+            url = f"{self.config.webhook_url}/tasks.task.list.json"
+            params = {
+                "filter": {
+                    "UF_ELEMENT_ID": element_id
+                },
+                "select": ["*", "UF_*"]
+            }
+
+            response = requests.post(url, json=params, timeout=self.config.request_timeout)
+            if response.status_code != 200:
+                logger.warning(f"Bitrix24 вернул статус {response.status_code} при поиске по UF_ELEMENT_ID={element_id}")
+                return None
+
+            result = response.json()
+            tasks = result.get('result', {}).get('tasks', [])
+
+            if tasks:
+                task = tasks[0]
+                self.element_task_cache[element_id] = task
+                logger.debug(f"Найдена задача {task.get('id')} для UF_ELEMENT_ID={element_id}")
+                return task
+
+            logger.debug(f"Задачи с UF_ELEMENT_ID={element_id} не найдены")
+            return None
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Ошибка запроса при поиске задачи по UF_ELEMENT_ID={element_id}: {e}")
+        except json.JSONDecodeError as e:
+            logger.error(f"Ошибка декодирования ответа при поиске задачи по UF_ELEMENT_ID={element_id}: {e}")
+        except Exception as e:
+            logger.error(f"Неожиданная ошибка при поиске задачи по UF_ELEMENT_ID={element_id}: {e}")
+
+        return None
 
     def _format_process_variable_value(self, property_type: Optional[str], value_entry: Any) -> str:
         """
@@ -446,7 +850,13 @@ class BitrixTaskHandler:
         
         return str(value)
     
-    def _build_task_data_from_template(self, template_data: Dict[str, Any], message_data: Dict[str, Any], task_id: str) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    def _build_task_data_from_template(
+        self,
+        template_data: Dict[str, Any],
+        message_data: Dict[str, Any],
+        task_id: str,
+        element_id: Optional[str] = None
+    ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
         """
         Формирование task_data из шаблона задачи
         
@@ -454,6 +864,7 @@ class BitrixTaskHandler:
             template_data: Данные шаблона из API (result.data)
             message_data: Исходные данные сообщения
             task_id: External Task ID
+            element_id: BPMN elementId, используется для UF_ELEMENT_ID
             
         Returns:
             Словарь task_data для создания задачи в Bitrix24
@@ -846,6 +1257,10 @@ class BitrixTaskHandler:
         if user_fields:
             task_data.update(user_fields)
             logger.debug(f"Добавлены пользовательские поля из метаданных: {list(user_fields.keys())}")
+
+        if element_id:
+            task_data['UF_ELEMENT_ID'] = element_id
+            logger.debug(f"Добавлено пользовательское поле UF_ELEMENT_ID={element_id} для задачи {task_id}")
         
         # Логирование финальных значений для отладки
         logger.debug(f"Формирование task_data из шаблона (templateId={template_data.get('meta', {}).get('templateId', 'N/A')}):")
@@ -953,6 +1368,22 @@ class BitrixTaskHandler:
         try:
             task_id = message_data.get('task_id', 'unknown')
             metadata = message_data.get('metadata', {})
+            camunda_process_id, element_id, diagram_id = self._extract_template_params(message_data)
+            responsible_info = self._get_responsible_info(camunda_process_id, diagram_id, element_id)
+            diagram_id_from_responsible = None
+            if responsible_info:
+                diagram_id_from_responsible = (
+                    responsible_info.get('DIAGRAM_ID') or
+                    responsible_info.get('diagramId')
+                )
+            diagram_id = self._resolve_diagram_id(
+                diagram_id,
+                camunda_process_id,
+                metadata,
+                None
+            )
+            if not diagram_id and diagram_id_from_responsible:
+                diagram_id = diagram_id_from_responsible
             activity_info = metadata.get('activityInfo', {})
             variables = message_data.get('variables', {})
             started_by = variables.get('startedBy')
@@ -965,10 +1396,6 @@ class BitrixTaskHandler:
             
             # DESCRIPTION - пустое или дубликат TITLE
             description = title
-            camunda_process_id = (
-                message_data.get('processDefinitionKey') or
-                message_data.get('process_definition_key')
-            )
             variables_block = self._build_process_variables_block(message_data, camunda_process_id, task_id)
             if variables_block:
                 description = f"{description.rstrip()}\n\n---\n{variables_block}" if description else variables_block
@@ -1005,10 +1432,32 @@ class BitrixTaskHandler:
             if user_fields:
                 task_data.update(user_fields)
                 logger.debug(f"Добавлены пользовательские поля из метаданных (fallback): {list(user_fields.keys())}")
+
+            if element_id:
+                task_data['UF_ELEMENT_ID'] = element_id
+                logger.debug(f"Fallback: установлено пользовательское поле UF_ELEMENT_ID={element_id}")
             
             logger.warning(f"Создание задачи в fallback режиме: TITLE={title}, RESPONSIBLE_ID={responsible_id}, CREATED_BY={created_by}")
+
+            predecessor_task_ids = self._apply_predecessor_dependencies(
+                task_data,
+                camunda_process_id,
+                diagram_id,
+                element_id,
+                responsible_info=responsible_info
+            )
             
-            return self._send_task_to_bitrix(task_data)
+            result = self._send_task_to_bitrix(task_data)
+
+            if result and result.get('result') and result['result'].get('task'):
+                created_task_id = result['result']['task'].get('id')
+                if created_task_id:
+                    try:
+                        self._create_task_dependencies(int(created_task_id), predecessor_task_ids)
+                    except Exception as e:
+                        logger.error(f"Ошибка создания зависимостей (fallback) для задачи {created_task_id}: {e}")
+            
+            return result
             
         except Exception as e:
             logger.error(f"Ошибка создания задачи в fallback режиме: {e}")
@@ -2424,7 +2873,7 @@ class BitrixTaskHandler:
             message_data: Данные сообщения из RabbitMQ
             
         Returns:
-            Кортеж (camunda_process_id, element_id) или (None, None) если не найдены
+            Кортеж (camunda_process_id, element_id, diagram_id) или (None, None, None) если не найдены
         """
         # Извлечение camunda_process_id (processDefinitionKey)
         camunda_process_id = (
@@ -2440,6 +2889,24 @@ class BitrixTaskHandler:
             metadata = message_data.get('metadata', {})
             activity_info = metadata.get('activityInfo', {})
             element_id = activity_info.get('id')
+
+        # Попытка извлечь diagramId непосредственно из сообщения
+        diagram_id = (
+            message_data.get('diagramId') or
+            message_data.get('diagram_id')
+        )
+        if not diagram_id:
+            metadata = message_data.get('metadata', {})
+            process_properties = metadata.get('processProperties', {})
+            diagram_id = (
+                process_properties.get('diagramId') or
+                process_properties.get('diagram_id') or
+                process_properties.get('diagramID')
+            )
+        if not diagram_id:
+            metadata = message_data.get('metadata', {})
+            diagram_meta = metadata.get('diagram', {})
+            diagram_id = diagram_meta.get('id') or diagram_meta.get('ID')
         
         # Логирование при отсутствии параметров
         if not camunda_process_id:
@@ -2450,15 +2917,24 @@ class BitrixTaskHandler:
             logger.warning("Не найден activity_id в сообщении (ни в корне, ни в metadata.activityInfo.id)")
             logger.debug(f"Доступные поля в metadata: {list(message_data.get('metadata', {}).keys())}")
         
-        return (camunda_process_id, element_id)
+        if not diagram_id:
+            logger.debug("diagramId не найден в message_data/metadata при первичном извлечении")
+        
+        return (camunda_process_id, element_id, diagram_id)
     
-    def _get_task_template(self, camunda_process_id: str, element_id: str) -> Optional[Dict[str, Any]]:
+    def _get_task_template(
+        self,
+        camunda_process_id: str,
+        element_id: str,
+        template_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
         """
         Получение шаблона задачи из Bitrix24 через REST API
         
         Args:
             camunda_process_id: ID процесса Camunda (processDefinitionKey)
             element_id: ID элемента диаграммы (activityId)
+            template_id: Необязательный TEMPLATE_ID из responsible API
             
         Returns:
             Словарь с данными шаблона (result.data) или None при ошибке
@@ -2483,30 +2959,32 @@ class BitrixTaskHandler:
             response.raise_for_status()
             result = response.json()
             
-            # Bitrix24 API оборачивает ответ в поле 'result'
-            if 'result' in result:
-                api_result = result['result']
-                
-                if api_result.get('success'):
-                    template_data = api_result.get('data')
-                    if template_data:
-                        self.stats["templates_found"] += 1
-                        logger.info(f"Шаблон задачи найден: templateId={template_data.get('meta', {}).get('templateId', 'N/A')}")
-                        return template_data
-                    else:
-                        self.stats["templates_not_found"] += 1
-                        logger.warning(f"Шаблон не найден: success=True, но data отсутствует")
-                        return None
-                else:
-                    self.stats["templates_not_found"] += 1
-                    error_msg = api_result.get('error', 'Unknown error')
-                    logger.warning(f"Шаблон не найден для camundaProcessId={camunda_process_id}, elementId={element_id}: {error_msg}")
-                    return None
-            else:
-                self.stats["templates_api_errors"] += 1
-                logger.error(f"Неожиданный формат ответа API: отсутствует поле 'result'")
-                logger.debug(f"Ответ API: {json.dumps(result, ensure_ascii=False, indent=2)}")
-                return None
+            template_data = self._parse_task_template_response(result)
+            if template_data:
+                self.stats["templates_found"] += 1
+                return template_data
+            
+            # Если не нашли, пробуем напрямую по TEMPLATE_ID
+            if template_id:
+                logger.warning(
+                    f"Повторный запрос шаблона по TEMPLATE_ID={template_id} "
+                    f"(camundaProcessId={camunda_process_id}, elementId={element_id})"
+                )
+                params = {'templateId': template_id}
+                response = requests.get(
+                    api_url,
+                    params=params,
+                    timeout=self.config.request_timeout
+                )
+                response.raise_for_status()
+                result = response.json()
+                template_data = self._parse_task_template_response(result)
+                if template_data:
+                    self.stats["templates_found"] += 1
+                    return template_data
+            
+            self.stats["templates_not_found"] += 1
+            return None
                 
         except requests.exceptions.Timeout:
             self.stats["templates_api_errors"] += 1
@@ -2523,6 +3001,30 @@ class BitrixTaskHandler:
         except Exception as e:
             self.stats["templates_api_errors"] += 1
             logger.error(f"Неожиданная ошибка при запросе шаблона: {e}")
+            return None
+    
+    def _parse_task_template_response(self, result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Унифицированный парсер ответа imena.camunda.tasktemplate.get
+        """
+        if 'result' not in result:
+            self.stats["templates_api_errors"] += 1
+            logger.error("Неожиданный формат ответа API: отсутствует поле 'result'")
+            logger.debug(f"Ответ API: {json.dumps(result, ensure_ascii=False, indent=2)}")
+            return None
+        
+        api_result = result['result']
+        if api_result.get('success'):
+            template_data = api_result.get('data')
+            if template_data:
+                logger.info(f"Шаблон задачи найден: templateId={template_data.get('meta', {}).get('templateId', 'N/A')}")
+                return template_data
+            else:
+                logger.warning("Шаблон не найден: success=True, но data отсутствует")
+                return None
+        else:
+            error_msg = api_result.get('error', 'Unknown error')
+            logger.warning(f"Шаблон не найден: {error_msg}")
             return None
     
     def _get_user_supervisor(self, user_id: int) -> Optional[int]:
