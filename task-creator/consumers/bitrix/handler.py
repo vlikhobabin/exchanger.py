@@ -850,6 +850,31 @@ class BitrixTaskHandler:
         
         return str(value)
     
+    def _get_camunda_int(self, variables: Optional[Dict[str, Any]], key: str) -> Optional[int]:
+        """
+        Безопасно извлекает целочисленное значение переменной Camunda (raw или {"value": ...}).
+        """
+        if not variables or not isinstance(variables, dict):
+            return None
+        
+        raw_value = variables.get(key)
+        if raw_value is None:
+            return None
+        
+        if isinstance(raw_value, dict):
+            raw_value = raw_value.get('value', raw_value.get('VALUE'))
+        
+        if isinstance(raw_value, str):
+            raw_value = raw_value.strip()
+            if raw_value == "":
+                return None
+        
+        try:
+            return int(raw_value)
+        except (TypeError, ValueError):
+            logger.warning(f"Некорректное значение переменной {key}: {raw_value}")
+            return None
+    
     def _build_task_data_from_template(
         self,
         template_data: Dict[str, Any],
@@ -875,7 +900,10 @@ class BitrixTaskHandler:
         tags = template_data.get('tags', [])
         metadata = message_data.get('metadata', {})
         process_properties = metadata.get('processProperties', {})
-        variables = message_data.get('variables', {})
+        variables = message_data.get('variables') or {}
+        parent_task_id = self._get_camunda_int(variables, 'parentTaskId')
+        diagram_owner_id = self._get_camunda_int(variables, 'diagramOwner')
+        group_id_from_variables = self._get_camunda_int(variables, 'groupId')
         
         # Определение инициатора процесса: только startedBy (реальный инициатор), fallback на id=1
         started_by = variables.get('startedBy')
@@ -931,6 +959,10 @@ class BitrixTaskHandler:
                 task_data['GROUP_ID'] = int(group_id)
             except (ValueError, TypeError):
                 logger.warning(f"Некорректный GROUP_ID в шаблоне: {group_id}")
+        
+        if not task_data.get('GROUP_ID') and group_id_from_variables:
+            task_data['GROUP_ID'] = group_id_from_variables
+            logger.debug(f"GROUP_ID получен из переменной процесса groupId: {group_id_from_variables}")
         
         # CREATED_BY с fallback на originatorId и поддержкой руководителя
         # ВАЖНО: Значение 0 в шаблоне означает, что поле не заполнено
@@ -1237,6 +1269,15 @@ class BitrixTaskHandler:
                     logger.debug(f"Руководитель не найден для добавления в AUDITORS (initiatorId={initiator_id_int})")
             except (ValueError, TypeError) as e:
                 logger.warning(f"Ошибка при добавлении руководителя в AUDITORS: {e}")
+
+        existing_auditors = task_data.get('AUDITORS')
+        has_auditors = bool(existing_auditors)
+        if isinstance(existing_auditors, list):
+            has_auditors = len(existing_auditors) > 0
+
+        if diagram_owner_id and not has_auditors:
+            task_data['AUDITORS'] = [diagram_owner_id]
+            logger.debug(f"AUDITORS получены из переменной процесса diagramOwner: {diagram_owner_id}")
         
         # Теги из tags
         if tags:
@@ -1257,6 +1298,11 @@ class BitrixTaskHandler:
         if user_fields:
             task_data.update(user_fields)
             logger.debug(f"Добавлены пользовательские поля из метаданных: {list(user_fields.keys())}")
+
+        if parent_task_id:
+            task_data['PARENT_ID'] = parent_task_id
+            task_data['SUBORDINATE'] = 'Y'
+            logger.debug(f"Установлены родительская задача {parent_task_id} и признак подзадачи")
 
         if element_id:
             task_data['UF_ELEMENT_ID'] = element_id
@@ -1385,7 +1431,10 @@ class BitrixTaskHandler:
             if not diagram_id and diagram_id_from_responsible:
                 diagram_id = diagram_id_from_responsible
             activity_info = metadata.get('activityInfo', {})
-            variables = message_data.get('variables', {})
+            variables = message_data.get('variables') or {}
+            parent_task_id = self._get_camunda_int(variables, 'parentTaskId')
+            diagram_owner_id = self._get_camunda_int(variables, 'diagramOwner')
+            group_id_from_variables = self._get_camunda_int(variables, 'groupId')
             started_by = variables.get('startedBy')
             
             # TITLE из activityInfo.name или fallback
@@ -1426,6 +1475,15 @@ class BitrixTaskHandler:
                 'UF_CAMUNDA_ID_EXTERNAL_TASK': task_id
             }
             
+            if group_id_from_variables:
+                task_data['GROUP_ID'] = group_id_from_variables
+                logger.debug(f"Fallback: GROUP_ID получен из переменной процесса groupId={group_id_from_variables}")
+            
+            if parent_task_id:
+                task_data['PARENT_ID'] = parent_task_id
+                task_data['SUBORDINATE'] = 'Y'
+                logger.debug(f"Fallback: задача помечена как подзадача родителя {parent_task_id}")
+            
             # Извлекаем и добавляем пользовательские поля из метаданных сообщения
             # (UF_RESULT_EXPECTED, UF_RESULT_QUESTION и другие)
             user_fields = self._extract_user_fields(metadata)
@@ -1436,6 +1494,10 @@ class BitrixTaskHandler:
             if element_id:
                 task_data['UF_ELEMENT_ID'] = element_id
                 logger.debug(f"Fallback: установлено пользовательское поле UF_ELEMENT_ID={element_id}")
+
+            if diagram_owner_id:
+                task_data['AUDITORS'] = [diagram_owner_id]
+                logger.debug(f"Fallback: AUDITORS получены из переменной diagramOwner={diagram_owner_id}")
             
             logger.warning(f"Создание задачи в fallback режиме: TITLE={title}, RESPONSIBLE_ID={responsible_id}, CREATED_BY={created_by}")
 
