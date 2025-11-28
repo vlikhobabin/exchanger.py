@@ -6,6 +6,11 @@ import sys
 import os
 import threading
 import time
+
+# Импорт env_loader ПЕРВЫМ для определения среды
+sys.path.insert(0, "/opt/exchanger.py")
+from env_loader import EXCHANGER_ENV, get_log_path, get_env_info
+
 from loguru import logger
 
 # SSL Patch - ДОЛЖЕН быть импортирован ДО ExternalTaskClient
@@ -15,13 +20,17 @@ from camunda_worker import UniversalCamundaWorker
 
 
 def setup_logging():
-    """Настройка логирования"""
+    """Настройка логирования с учетом среды выполнения"""
     # Удаление стандартного обработчика
     logger.remove()
     
-    # Настройка форматирования
+    # Получаем метку среды для логов
+    env_label = EXCHANGER_ENV.upper()
+    
+    # Настройка форматирования с меткой среды
     log_format = (
         "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
+        f"<magenta>[{env_label}]</magenta> | "
         "<level>{level: <8}</level> | "
         "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | "
         "<level>{message}</level>"
@@ -35,9 +44,9 @@ def setup_logging():
         colorize=True
     )
     
-    # Файловый вывод
+    # Файловый вывод - путь зависит от среды
     logger.add(
-        "/opt/exchanger.py/logs/camunda-worker.log",
+        get_log_path("camunda-worker.log"),
         format=log_format,
         level=worker_config.log_level,
         rotation="100 MB",
@@ -46,9 +55,9 @@ def setup_logging():
         encoding="utf-8"
     )
     
-    # Файл ошибок
+    # Файл ошибок - путь зависит от среды
     logger.add(
-        "/opt/exchanger.py/logs/camunda-worker-errors.log",
+        get_log_path("camunda-worker-errors.log"),
         format=log_format,
         level="ERROR",
         rotation="50 MB",
@@ -74,12 +83,19 @@ def main():
         # Настройка логирования
         setup_logging()
         
+        # Получаем информацию о среде
+        env_info = get_env_info()
+        env_label = EXCHANGER_ENV.upper()
+        
         logger.info("=" * 60)
-        logger.info("UNIVERSAL CAMUNDA WORKER (INTEGRATED MODE)")
+        logger.info(f"UNIVERSAL CAMUNDA WORKER [{env_label}]")
         logger.info("=" * 60)
         logger.info("Версия: 2.1.0")
         logger.info("Автор: EG-Holding")
         logger.info("Режим: Интегрированная обработка задач и ответов")
+        logger.info(f"Среда: {env_info['environment']}")
+        logger.info(f"Конфигурация: {env_info['env_file']}")
+        logger.info(f"Директория логов: {env_info['logs_dir']}")
         logger.info("=" * 60)
         
         # Проверка применения SSL патча

@@ -6,6 +6,11 @@
 """
 import sys
 import os
+
+# Импорт env_loader ПЕРВЫМ для определения среды
+sys.path.insert(0, "/opt/exchanger.py")
+from env_loader import EXCHANGER_ENV, get_log_path, get_env_info
+
 from loguru import logger
 
 from config import worker_config, rabbitmq_config, systems_config
@@ -14,13 +19,17 @@ from instance_lock import InstanceLock
 
 
 def setup_logging():
-    """Настройка логирования"""
+    """Настройка логирования с учетом среды выполнения"""
     # Удаление стандартного обработчика
     logger.remove()
     
-    # Настройка форматирования
+    # Получаем метку среды для логов
+    env_label = EXCHANGER_ENV.upper()
+    
+    # Настройка форматирования с меткой среды
     log_format = (
         "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
+        f"<magenta>[{env_label}]</magenta> | "
         "<level>{level: <8}</level> | "
         "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | "
         "<level>{message}</level>"
@@ -34,9 +43,9 @@ def setup_logging():
         colorize=True
     )
     
-    # Файловый вывод с оптимизированной ротацией
+    # Файловый вывод с оптимизированной ротацией - путь зависит от среды
     logger.add(
-        "/opt/exchanger.py/logs/exchanger-task-creator.log",
+        get_log_path("task-creator.log"),
         format=log_format,
         level=worker_config.log_level,
         rotation="20 MB",  # Уменьшено с 100MB для более частой ротации
@@ -45,9 +54,9 @@ def setup_logging():
         encoding="utf-8"
     )
     
-    # Файл ошибок
+    # Файл ошибок - путь зависит от среды
     logger.add(
-        "/opt/exchanger.py/logs/exchanger-task-creator-errors.log",
+        get_log_path("task-creator-errors.log"),
         format=log_format,
         level="ERROR",
         rotation="20 MB",
@@ -63,11 +72,18 @@ def main():
         # Настройка логирования
         setup_logging()
         
+        # Получаем информацию о среде
+        env_info = get_env_info()
+        env_label = EXCHANGER_ENV.upper()
+        
         logger.info("=" * 60)
-        logger.info("UNIVERSAL RABBITMQ WORKER")
+        logger.info(f"UNIVERSAL RABBITMQ WORKER [{env_label}]")
         logger.info("=" * 60)
         logger.info("Версия: 1.0.0")
         logger.info("Универсальная обработка сообщений из RabbitMQ для внешних систем")
+        logger.info(f"Среда: {env_info['environment']}")
+        logger.info(f"Конфигурация: {env_info['env_file']}")
+        logger.info(f"Директория логов: {env_info['logs_dir']}")
         logger.info("=" * 60)
         
         # Вывод конфигурации

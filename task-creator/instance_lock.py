@@ -9,11 +9,18 @@ import time
 from typing import Optional
 from loguru import logger
 
+# Импорт env_loader для определения среды
+sys.path.insert(0, "/opt/exchanger.py")
+from env_loader import EXCHANGER_ENV
+
 
 class InstanceLock:
     """Класс для файловой блокировки инстанса"""
     
-    def __init__(self, lock_file: str = "/tmp/exchanger-task-creator.lock"):
+    def __init__(self, lock_file: str = None):
+        # Разные lock-файлы для разных сред (prod/dev)
+        if lock_file is None:
+            lock_file = f"/tmp/exchanger-task-creator-{EXCHANGER_ENV}.lock"
         self.lock_file = lock_file
         self.lock_fd: Optional[int] = None
         self.pid: int = os.getpid()

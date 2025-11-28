@@ -2,12 +2,15 @@
 Конфигурационный файл для Camunda Worker
 """
 import os
+import sys
 from typing import Dict, List, Optional
 from pydantic import Field
 from pydantic_settings import BaseSettings
-from dotenv import load_dotenv
 
-load_dotenv()
+# Импорт env_loader ДО любых других импортов, зависящих от переменных окружения
+# Он загружает правильный .env файл на основе EXCHANGER_ENV
+sys.path.insert(0, "/opt/exchanger.py")
+from env_loader import EXCHANGER_ENV, get_log_path, get_env_info
 
 
 class CamundaConfig(BaseSettings):
