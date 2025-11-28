@@ -16,7 +16,7 @@ from loguru import logger
 
 # SSL Patch - ДОЛЖЕН быть импортирован ДО ExternalTaskClient
 import ssl_patch
-from camunda.client.external_task_client import ExternalTaskClient
+from tenant_external_task_client import TenantAwareExternalTaskClient
 from camunda.external_task.external_task import ExternalTask
 from config import camunda_config, worker_config, routing_config, rabbitmq_config
 from rabbitmq_client import RabbitMQClient
@@ -33,7 +33,7 @@ class UniversalCamundaWorker:
         self.rabbitmq_config = rabbitmq_config
         
         # Компоненты
-        self.client: Optional[ExternalTaskClient] = None
+        self.client: Optional[TenantAwareExternalTaskClient] = None
         self.rabbitmq_client = RabbitMQClient()
         self.metadata_cache: Optional[BPMNMetadataCache] = None
         
@@ -130,12 +130,19 @@ class UniversalCamundaWorker:
                     "password": self.config.auth_password
                 }
             
-            # Создание ExternalTaskClient
-            self.client = ExternalTaskClient(
+            # Создание TenantAwareExternalTaskClient с поддержкой multi-tenancy
+            self.client = TenantAwareExternalTaskClient(
                 worker_id=self.config.worker_id,
                 engine_base_url=self.config.base_url,
-                config=client_config
+                config=client_config,
+                tenant_id=self.config.tenant_id  # Фильтрация по tenant
             )
+            
+            # Логирование информации о tenant
+            if self.config.tenant_id:
+                logger.info(f"🏢 Tenant ID: {self.config.tenant_id}")
+            else:
+                logger.warning("⚠️ Tenant ID не указан - будут получаться задачи всех тенантов")
             
             # Инициализация кэша метаданных BPMN
             self.metadata_cache = BPMNMetadataCache(

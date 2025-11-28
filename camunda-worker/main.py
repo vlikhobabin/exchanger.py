@@ -15,7 +15,7 @@ from loguru import logger
 
 # SSL Patch - ДОЛЖЕН быть импортирован ДО ExternalTaskClient
 import ssl_patch
-from config import worker_config
+from config import worker_config, camunda_config
 from camunda_worker import UniversalCamundaWorker
 
 
@@ -96,6 +96,13 @@ def main():
         logger.info(f"Среда: {env_info['environment']}")
         logger.info(f"Конфигурация: {env_info['env_file']}")
         logger.info(f"Директория логов: {env_info['logs_dir']}")
+        
+        # Информация о Camunda tenant
+        if camunda_config.tenant_id:
+            logger.info(f"🏢 Camunda Tenant: {camunda_config.tenant_id}")
+        else:
+            logger.warning("⚠️ Camunda Tenant: не указан (все тенанты)")
+        
         logger.info("=" * 60)
         
         # Проверка применения SSL патча

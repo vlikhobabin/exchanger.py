@@ -47,6 +47,9 @@ class CamundaConfig(BaseSettings):
     auth_username: str = Field(default="demo", env="CAMUNDA_AUTH_USERNAME")
     auth_password: str = Field(default="BwS-YqM-AFd-Cru", env="CAMUNDA_AUTH_PASSWORD")
     
+    # Multi-tenancy - Tenant ID для фильтрации задач
+    tenant_id: Optional[str] = Field(default=None, env="CAMUNDA_TENANT_ID")
+    
     class Config:
         env_prefix = "CAMUNDA_"
 
