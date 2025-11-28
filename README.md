@@ -49,6 +49,7 @@ StormBPMN ←→ Camunda-StormBPMN Sync ←→ Camunda BPM ←→ Camunda Worker
 | Автозапуск | ✅ Да | ❌ Нет |
 | Bitrix24 | Production сервер | Dev сервер |
 | Camunda Tenant | `imenaProd` | `imenaDev` |
+| RabbitMQ vhost | `/prod` | `/dev` |
 
 ### Управление сервисами
 
@@ -208,6 +209,7 @@ nano .env.dev
 | `LOG_LEVEL` | INFO | DEBUG |
 | `BITRIX_WEBHOOK_URL` | Production URL | Dev URL |
 | `CAMUNDA_TENANT_ID` | imenaProd | imenaDev |
+| `RABBITMQ_VIRTUAL_HOST` | /prod | /dev |
 | `DEBUG_SAVE_RESPONSE_MESSAGES` | false | true |
 | `CAMUNDA_DEBUG` | false | true |
 
@@ -358,6 +360,14 @@ Camunda Worker поддерживает изоляцию задач по tenant 
 - **Кастомный клиент** `TenantAwareExternalTaskClient` расширяет стандартную библиотеку
 - **Фильтрация задач** через параметр `tenantIdIn` в Camunda REST API
 
+### RabbitMQ Virtual Hosts
+
+Полная изоляция очередей через Virtual Hosts:
+
+- **Production**: `RABBITMQ_VIRTUAL_HOST=/prod` — отдельные очереди и exchanges
+- **Development**: `RABBITMQ_VIRTUAL_HOST=/dev` — изолированная инфраструктура
+- **Автоматическое создание** очередей и exchanges при первом запуске
+
 ### Разделение сред Production / Development
 
 Система поддерживает одновременную работу двух независимых сред:
@@ -411,11 +421,11 @@ MIT License
 
 ## История изменений
 
-### v2.3.0 - Camunda Multi-Tenancy
-- ✅ **Поддержка tenant ID**: Изоляция задач по tenant в Camunda
+### v2.3.0 - Camunda Multi-Tenancy & RabbitMQ Virtual Hosts
+- ✅ **Camunda Tenant ID**: Изоляция задач по tenant (`imenaProd` / `imenaDev`)
 - ✅ **TenantAwareExternalTaskClient**: Кастомный клиент с фильтрацией по tenant
-- ✅ **Конфигурация CAMUNDA_TENANT_ID**: `imenaProd` для prod, `imenaDev` для dev
-- ✅ **Логирование tenant**: Отображение tenant ID при старте сервиса
+- ✅ **RabbitMQ Virtual Hosts**: Полная изоляция очередей (`/prod` / `/dev`)
+- ✅ **Логирование**: Отображение tenant ID и vhost при старте сервиса
 
 ### v2.2.0 - Разделение сред Production / Development
 - ✅ **Переменная EXCHANGER_ENV**: Определение среды через переменную окружения
