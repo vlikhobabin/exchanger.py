@@ -499,4 +499,100 @@ class RabbitMQClient:
             }
         except Exception as e:
             logger.error(f"Ошибка получения информации об AE: {e}")
-            return {} 
+            return {}
+    
+    def publish_response_processing_error(
+        self, 
+        original_message: Dict[str, Any], 
+        error_info: Dict[str, Any],
+        task_id: str,
+        activity_id: Optional[str] = None
+    ) -> bool:
+        """
+        Публикация ошибки обработки ответа в очередь ошибок.
+        
+        Используется когда не удалось завершить задачу в Camunda (например, ошибка в BPMN диаграмме).
+        Сообщение сохраняется для последующего анализа и возможной ручной обработки.
+        
+        Args:
+            original_message: Полное оригинальное сообщение из camunda.responses.queue
+            error_info: Информация об ошибке (тип, сообщение, код HTTP и т.д.)
+            task_id: ID задачи в Camunda
+            activity_id: ID активности в BPMN (опционально)
+            
+        Returns:
+            True если сообщение успешно опубликовано, False в случае ошибки
+        """
+        try:
+            if not self.channel:
+                logger.error("Нет активного соединения с RabbitMQ для публикации ошибки")
+                return False
+            
+            # Формируем полное сообщение об ошибке
+            error_message = {
+                "error_info": {
+                    "type": error_info.get("type", "unknown_error"),
+                    "message": error_info.get("message", "Unknown error"),
+                    "camunda_error_type": error_info.get("camunda_error_type"),
+                    "camunda_error_message": error_info.get("camunda_error_message"),
+                    "http_status_code": error_info.get("http_status_code"),
+                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "source_queue": self.config.responses_queue_name
+                },
+                "original_message": original_message,
+                "task_id": task_id,
+                "activity_id": activity_id,
+                "error_timestamp": int(time.time() * 1000)
+            }
+            
+            # Публикация в очередь ошибок
+            self.channel.basic_publish(
+                exchange=self.config.tasks_exchange_name,
+                routing_key="errors.camunda_tasks",
+                body=json.dumps(error_message, ensure_ascii=False),
+                properties=pika.BasicProperties(
+                    delivery_mode=2,  # Устойчивое сообщение
+                    timestamp=int(time.time()),
+                    content_type='application/json',
+                    headers={
+                        'error_type': error_info.get("type", "unknown_error"),
+                        'task_id': task_id,
+                        'activity_id': activity_id,
+                        'source': 'response_processing'
+                    }
+                )
+            )
+            
+            logger.warning(
+                f"Ошибка обработки ответа перемещена в очередь ошибок: "
+                f"task_id={task_id}, error_type={error_info.get('type')}"
+            )
+            return True
+            
+        except Exception as e:
+            logger.error(f"Критическая ошибка публикации в очередь ошибок: {e}")
+            # Попытка переподключения при ошибках соединения
+            if self._handle_connection_error(e):
+                try:
+                    # Повторная попытка после переподключения
+                    self.channel.basic_publish(
+                        exchange=self.config.tasks_exchange_name,
+                        routing_key="errors.camunda_tasks",
+                        body=json.dumps(error_message, ensure_ascii=False),
+                        properties=pika.BasicProperties(
+                            delivery_mode=2,
+                            timestamp=int(time.time()),
+                            content_type='application/json',
+                            headers={
+                                'error_type': error_info.get("type", "unknown_error"),
+                                'task_id': task_id,
+                                'activity_id': activity_id,
+                                'source': 'response_processing'
+                            }
+                        )
+                    )
+                    logger.info(f"Ошибка обработки успешно опубликована после переподключения: {task_id}")
+                    return True
+                except Exception as retry_error:
+                    logger.critical(f"Не удалось опубликовать ошибку даже после переподключения: {retry_error}")
+            return False 

@@ -61,7 +61,8 @@ class BitrixTaskHandler:
         self.diagram_details_cache: Dict[str, Dict[str, Any]] = {}
         self.element_predecessors_cache: Dict[Tuple[Optional[str], Optional[str], str], List[str]] = {}
         self.responsible_cache: Dict[Tuple[Optional[str], Optional[str], str], Optional[Dict[str, Any]]] = {}
-        self.element_task_cache: Dict[str, Dict[str, Any]] = {}
+        # Кэш задач по element_id и process_instance_id: ключ = (element_id, process_instance_id)
+        self.element_task_cache: Dict[Tuple[Optional[str], Optional[str]], Dict[str, Any]] = {}
         
         # КРИТИЧЕСКАЯ ПРОВЕРКА: Проверяем существование обязательного поля UF_CAMUNDA_ID_EXTERNAL_TASK
         self._check_required_user_field()
@@ -261,12 +262,15 @@ class BitrixTaskHandler:
                 logger.debug(f"Добавлен блок переменных процесса в описание задачи {task_id}")
 
             # Шаг 3.2: Добавление списка предшественников
+            # Извлекаем process_instance_id для поиска предшественников в рамках одного экземпляра процесса
+            process_instance_id = message_data.get('processInstanceId') or message_data.get('process_instance_id')
             predecessor_task_ids = self._apply_predecessor_dependencies(
                 task_data,
                 camunda_process_id,
                 diagram_id,
                 element_id,
-                responsible_info=responsible_info
+                responsible_info=responsible_info,
+                process_instance_id=process_instance_id
             )
             
             # Шаг 3.3: Получение и добавление результатов предшествующих задач
@@ -658,10 +662,22 @@ class BitrixTaskHandler:
         camunda_process_id: Optional[str],
         diagram_id: Optional[str],
         element_id: Optional[str],
-        responsible_info: Optional[Dict[str, Any]] = None
+        responsible_info: Optional[Dict[str, Any]] = None,
+        process_instance_id: Optional[str] = None
     ) -> List[int]:
         """
         Добавляет сведения о задачах-предшественниках в task_data, если они найдены.
+        
+        Args:
+            task_data: Данные задачи для модификации
+            camunda_process_id: ID процесса Camunda (processDefinitionKey)
+            diagram_id: ID диаграммы Storm
+            element_id: ID элемента BPMN
+            responsible_info: Информация об ответственном элементе
+            process_instance_id: ID экземпляра процесса (для поиска предшественников в рамках одного экземпляра)
+        
+        Returns:
+            Список ID задач-предшественников в Bitrix24
         """
         if not element_id:
             logger.debug("Пропуск добавления предшественников: отсутствует elementId")
@@ -681,7 +697,7 @@ class BitrixTaskHandler:
         predecessor_task_ids: List[int] = []
 
         for predecessor_element_id in predecessor_elements:
-            existing_task = self._find_task_by_element_id(predecessor_element_id)
+            existing_task = self._find_task_by_element_and_instance(predecessor_element_id, process_instance_id)
             if not existing_task:
                 missing_elements.append(predecessor_element_id)
                 continue
@@ -1021,28 +1037,55 @@ class BitrixTaskHandler:
                 self.stats["predecessor_files_failed"] += 1
                 logger.error(f"Неожиданная ошибка при прикреплении файла '{file_name}': {e}")
 
-    def _find_task_by_element_id(self, element_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    def _find_task_by_element_and_instance(
+        self, 
+        element_id: Optional[str], 
+        process_instance_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
         """
-        Поиск задачи в Bitrix24 по значению пользовательского поля UF_ELEMENT_ID.
+        Поиск задачи в Bitrix24 по значениям пользовательских полей UF_ELEMENT_ID и UF_PROCESS_INSTANCE_ID.
+        
+        Поиск осуществляется по двум полям одновременно, чтобы найти задачу-предшественник
+        именно в рамках того же экземпляра процесса Camunda.
+        
+        Args:
+            element_id: ID элемента BPMN (activityId)
+            process_instance_id: ID экземпляра процесса Camunda (для поиска в рамках одного экземпляра)
+            
+        Returns:
+            Данные задачи если найдена, None если не найдена
         """
         if not element_id:
             return None
 
-        if element_id in self.element_task_cache:
-            return self.element_task_cache[element_id]
+        # Ключ кэша включает оба параметра
+        cache_key = (element_id, process_instance_id)
+        if cache_key in self.element_task_cache:
+            return self.element_task_cache[cache_key]
 
         try:
             url = f"{self.config.webhook_url}/tasks.task.list.json"
+            
+            # Формируем фильтр с учётом process_instance_id
+            filter_params = {
+                "UF_ELEMENT_ID": element_id
+            }
+            
+            # Добавляем фильтр по process_instance_id если он указан
+            if process_instance_id:
+                filter_params["UF_PROCESS_INSTANCE_ID"] = process_instance_id
+                logger.debug(f"Поиск предшественника: UF_ELEMENT_ID={element_id}, UF_PROCESS_INSTANCE_ID={process_instance_id}")
+            else:
+                logger.warning(f"Поиск предшественника без process_instance_id: UF_ELEMENT_ID={element_id} (может вернуть задачу из другого экземпляра процесса!)")
+            
             params = {
-                "filter": {
-                    "UF_ELEMENT_ID": element_id
-                },
+                "filter": filter_params,
                 "select": ["*", "UF_*"]
             }
 
             response = requests.post(url, json=params, timeout=self.config.request_timeout)
             if response.status_code != 200:
-                logger.warning(f"Bitrix24 вернул статус {response.status_code} при поиске по UF_ELEMENT_ID={element_id}")
+                logger.warning(f"Bitrix24 вернул статус {response.status_code} при поиске по UF_ELEMENT_ID={element_id}, UF_PROCESS_INSTANCE_ID={process_instance_id}")
                 return None
 
             result = response.json()
@@ -1050,19 +1093,19 @@ class BitrixTaskHandler:
 
             if tasks:
                 task = tasks[0]
-                self.element_task_cache[element_id] = task
-                logger.debug(f"Найдена задача {task.get('id')} для UF_ELEMENT_ID={element_id}")
+                self.element_task_cache[cache_key] = task
+                logger.debug(f"Найдена задача {task.get('id')} для UF_ELEMENT_ID={element_id}, UF_PROCESS_INSTANCE_ID={process_instance_id}")
                 return task
 
-            logger.debug(f"Задачи с UF_ELEMENT_ID={element_id} не найдены")
+            logger.debug(f"Задачи с UF_ELEMENT_ID={element_id}, UF_PROCESS_INSTANCE_ID={process_instance_id} не найдены")
             return None
 
         except requests.exceptions.RequestException as e:
-            logger.error(f"Ошибка запроса при поиске задачи по UF_ELEMENT_ID={element_id}: {e}")
+            logger.error(f"Ошибка запроса при поиске задачи по UF_ELEMENT_ID={element_id}, UF_PROCESS_INSTANCE_ID={process_instance_id}: {e}")
         except json.JSONDecodeError as e:
             logger.error(f"Ошибка декодирования ответа при поиске задачи по UF_ELEMENT_ID={element_id}: {e}")
         except Exception as e:
-            logger.error(f"Неожиданная ошибка при поиске задачи по UF_ELEMENT_ID={element_id}: {e}")
+            logger.error(f"Неожиданная ошибка при поиске задачи по UF_ELEMENT_ID={element_id}, UF_PROCESS_INSTANCE_ID={process_instance_id}: {e}")
 
         return None
 
@@ -1581,6 +1624,15 @@ class BitrixTaskHandler:
             task_data['UF_ELEMENT_ID'] = element_id
             logger.debug(f"Добавлено пользовательское поле UF_ELEMENT_ID={element_id} для задачи {task_id}")
         
+        # UF_PROCESS_INSTANCE_ID - идентификатор экземпляра процесса Camunda
+        # Необходим для поиска предшественников в рамках одного экземпляра процесса
+        process_instance_id = message_data.get('processInstanceId') or message_data.get('process_instance_id')
+        if process_instance_id:
+            task_data['UF_PROCESS_INSTANCE_ID'] = str(process_instance_id)
+            logger.debug(f"Добавлено пользовательское поле UF_PROCESS_INSTANCE_ID={process_instance_id} для задачи {task_id}")
+        else:
+            logger.warning(f"processInstanceId не найден в message_data для задачи {task_id}, UF_PROCESS_INSTANCE_ID не будет установлен")
+        
         # Логирование финальных значений для отладки
         logger.debug(f"Формирование task_data из шаблона (templateId={template_data.get('meta', {}).get('templateId', 'N/A')}):")
         logger.debug(f"  TITLE: {task_data.get('TITLE', 'N/A')}")
@@ -1768,6 +1820,14 @@ class BitrixTaskHandler:
                 task_data['UF_ELEMENT_ID'] = element_id
                 logger.debug(f"Fallback: установлено пользовательское поле UF_ELEMENT_ID={element_id}")
 
+            # UF_PROCESS_INSTANCE_ID - идентификатор экземпляра процесса Camunda
+            process_instance_id = message_data.get('processInstanceId') or message_data.get('process_instance_id')
+            if process_instance_id:
+                task_data['UF_PROCESS_INSTANCE_ID'] = str(process_instance_id)
+                logger.debug(f"Fallback: установлено пользовательское поле UF_PROCESS_INSTANCE_ID={process_instance_id}")
+            else:
+                logger.warning(f"Fallback: processInstanceId не найден в message_data для задачи {task_id}")
+
             if diagram_owner_id:
                 task_data['AUDITORS'] = [diagram_owner_id]
                 logger.debug(f"Fallback: AUDITORS получены из переменной diagramOwner={diagram_owner_id}")
@@ -1779,7 +1839,8 @@ class BitrixTaskHandler:
                 camunda_process_id,
                 diagram_id,
                 element_id,
-                responsible_info=responsible_info
+                responsible_info=responsible_info,
+                process_instance_id=process_instance_id
             )
             
             # Получение и добавление результатов предшествующих задач (fallback)
@@ -3483,6 +3544,8 @@ class BitrixTaskHandler:
         - UF_RESULT_ANSWER (enumeration) - ответ пользователя на вопрос задачи
         - UF_RESULT_QUESTION (string) - вопрос для задачи, требующей ответа
         - UF_RESULT_EXPECTED (boolean) - флаг, требуется ли ответ от пользователя
+        - UF_ELEMENT_ID (string) - ID элемента BPMN диаграммы
+        - UF_PROCESS_INSTANCE_ID (string) - ID экземпляра процесса Camunda
         
         Если хотя бы одно поле отсутствует - останавливает сервис с фатальной ошибкой.
         Все поля должны быть созданы администратором вручную перед запуском сервиса.
@@ -3507,6 +3570,14 @@ class BitrixTaskHandler:
             "UF_RESULT_EXPECTED": {
                 "type": "boolean",
                 "description": "Флаг, требуется ли ответ от пользователя"
+            },
+            "UF_ELEMENT_ID": {
+                "type": "string",
+                "description": "ID элемента BPMN диаграммы (activityId)"
+            },
+            "UF_PROCESS_INSTANCE_ID": {
+                "type": "string",
+                "description": "ID экземпляра процесса Camunda (для связи задач одного экземпляра)"
             }
         }
         
@@ -3706,6 +3777,8 @@ class BitrixTaskHandler:
             logger.error("   - UF_RESULT_ANSWER (enumeration)")
             logger.error("   - UF_RESULT_QUESTION (string)")
             logger.error("   - UF_RESULT_EXPECTED (boolean)")
+            logger.error("   - UF_ELEMENT_ID (string)")
+            logger.error("   - UF_PROCESS_INSTANCE_ID (string)")
             logger.error("3. Перезапустите сервис после исправления")
             logger.error("")
             raise SystemExit(1)

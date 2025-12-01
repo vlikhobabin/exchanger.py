@@ -11,7 +11,7 @@ import threading
 import traceback
 import requests
 import os
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 from loguru import logger
 
 # SSL Patch - ДОЛЖЕН быть импортирован ДО ExternalTaskClient
@@ -432,7 +432,15 @@ class UniversalCamundaWorker:
             logger.error(f"Ошибка при проверке очереди ответов: {e}")
     
     def _process_single_response_message(self) -> bool:
-        """Обработка одного сообщения из очереди ответов"""
+        """
+        Обработка одного сообщения из очереди ответов.
+        
+        При ошибке обработки сообщение перемещается в очередь ошибок
+        (errors.camunda_tasks.queue) для последующего анализа.
+        """
+        method_frame = None
+        message_data = None
+        
         try:
             # Получаем сообщение без автоподтверждения
             method_frame, header_frame, body = self.rabbitmq_client.channel.basic_get(
@@ -448,7 +456,16 @@ class UniversalCamundaWorker:
                 message_data = json.loads(body.decode('utf-8'))
             except (json.JSONDecodeError, UnicodeDecodeError) as e:
                 logger.error(f"Ошибка парсинга сообщения из очереди ответов: {e}")
-                # ACK даже при ошибке парсинга - чтобы не блокировать очередь
+                # Перемещаем в очередь ошибок даже при ошибке парсинга
+                self.rabbitmq_client.publish_response_processing_error(
+                    original_message={"raw_body": body.decode('utf-8', errors='replace')},
+                    error_info={
+                        "type": "json_parse_error",
+                        "message": f"Ошибка парсинга JSON: {e}"
+                    },
+                    task_id="unknown",
+                    activity_id=None
+                )
                 self.rabbitmq_client.channel.basic_ack(delivery_tag=method_frame.delivery_tag)
                 return True
             
@@ -458,28 +475,73 @@ class UniversalCamundaWorker:
             
             self.stats["processed_responses"] += 1
             
+            # Извлекаем task_id и activity_id для использования в ошибках
+            original_message = message_data.get("original_message", {})
+            task_id = original_message.get("task_id", "unknown")
+            activity_id = original_message.get("activity_id")
+            
             # Обрабатываем ответное сообщение
-            success = self._process_response_message(message_data)
+            success, error_info = self._process_response_message(message_data)
             
-            # ВСЕГДА ACK, даже если обработка не удалась
-            # Т.к. Camunda API может вернуть 404 если задача уже завершена (retry)
-            self.rabbitmq_client.channel.basic_ack(delivery_tag=method_frame.delivery_tag)
-            
-            if not success:
-                # Логируем, но не requeue - избегаем бесконечного цикла
-                task_id = message_data.get("original_message", {}).get("task_id", "unknown")
-                logger.error(f"Failed to process response for task {task_id}, but ACK sent to avoid loop")
+            if success:
+                # Успешная обработка - просто ACK
+                self.rabbitmq_client.channel.basic_ack(delivery_tag=method_frame.delivery_tag)
+            else:
+                # Ошибка обработки - перемещаем в очередь ошибок
+                logger.warning(f"Ошибка обработки задачи {task_id}, перемещаем в очередь ошибок...")
+                
+                # Публикуем в очередь ошибок
+                error_published = self.rabbitmq_client.publish_response_processing_error(
+                    original_message=message_data,
+                    error_info=error_info or {"type": "unknown_error", "message": "Unknown error"},
+                    task_id=task_id,
+                    activity_id=activity_id
+                )
+                
+                if error_published:
+                    # Успешно переместили в очередь ошибок - ACK оригинал
+                    self.rabbitmq_client.channel.basic_ack(delivery_tag=method_frame.delivery_tag)
+                    logger.info(f"Сообщение для задачи {task_id} перемещено в очередь ошибок")
+                else:
+                    # Не удалось переместить в очередь ошибок - NACK для повторной попытки
+                    logger.error(f"Не удалось переместить задачу {task_id} в очередь ошибок, возвращаем в очередь")
+                    self.rabbitmq_client.channel.basic_nack(delivery_tag=method_frame.delivery_tag, requeue=True)
             
             return True
             
         except Exception as e:
-            logger.error(f"Ошибка при обработке сообщения из очереди ответов: {e}")
-            # При критической ошибке - ACK чтобы не блокировать очередь
-            if 'method_frame' in locals() and method_frame:
+            logger.error(f"Критическая ошибка при обработке сообщения из очереди ответов: {e}")
+            
+            # Пытаемся переместить в очередь ошибок даже при критической ошибке
+            if method_frame:
                 try:
-                    self.rabbitmq_client.channel.basic_ack(delivery_tag=method_frame.delivery_tag)
-                except:
-                    pass  # Игнорируем ошибки ACK при критических ошибках
+                    task_id = "unknown"
+                    activity_id = None
+                    if message_data:
+                        task_id = message_data.get("original_message", {}).get("task_id", "unknown")
+                        activity_id = message_data.get("original_message", {}).get("activity_id")
+                    
+                    error_published = self.rabbitmq_client.publish_response_processing_error(
+                        original_message=message_data or {"error": "message_data not available"},
+                        error_info={
+                            "type": "critical_exception",
+                            "message": f"Критическая ошибка: {e}"
+                        },
+                        task_id=task_id,
+                        activity_id=activity_id
+                    )
+                    
+                    if error_published:
+                        self.rabbitmq_client.channel.basic_ack(delivery_tag=method_frame.delivery_tag)
+                        logger.info(f"Критическая ошибка для задачи {task_id} перемещена в очередь ошибок")
+                    else:
+                        # Если не удалось переместить в очередь ошибок - ACK чтобы не блокировать
+                        # (лучше потерять сообщение, чем заблокировать всю очередь)
+                        self.rabbitmq_client.channel.basic_ack(delivery_tag=method_frame.delivery_tag)
+                        logger.critical(f"ПОТЕРЯ ДАННЫХ: Не удалось сохранить ошибку для задачи {task_id}")
+                except Exception as ack_error:
+                    logger.critical(f"Не удалось обработать ошибку: {ack_error}")
+            
             return False
     
     def _convert_uf_result_answer(self, uf_result_answer_text: str) -> str:
@@ -516,7 +578,7 @@ class UniversalCamundaWorker:
             logger.error(f"Ошибка конвертации ufResultAnswer_text '{uf_result_answer_text}': {e}")
             return "no"
 
-    def _process_response_message(self, message_data: Dict[str, Any]) -> bool:
+    def _process_response_message(self, message_data: Dict[str, Any]) -> Tuple[bool, Optional[Dict[str, Any]]]:
         """
         Обработка ответного сообщения и завершение задачи в Camunda
         
@@ -525,6 +587,11 @@ class UniversalCamundaWorker:
         - Удалена переменная result из переменных процесса  
         - Логика проверки ответа использует ufResultExpected вместо checkListCanAdd
         - Данные извлекаются только из строго определенных полей API ответа
+        
+        Returns:
+            Tuple[bool, Optional[Dict]]:
+                - (True, None) при успехе
+                - (False, error_info) при ошибке, где error_info содержит детали
         """
         try:
             # Извлекаем данные из сообщения
@@ -535,7 +602,10 @@ class UniversalCamundaWorker:
             task_id = original_message.get("task_id")
             if not task_id:
                 logger.error("Отсутствует task_id в ответном сообщении")
-                return False
+                return False, {
+                    "type": "missing_task_id",
+                    "message": "Отсутствует task_id в ответном сообщении"
+                }
             
             logger.info(f"Обрабатываем ответ для задачи {task_id} (статус: {processing_status})")
             
@@ -543,7 +613,7 @@ class UniversalCamundaWorker:
             # Поддерживаем оба статуса: completed (прямой ответ) и completed_by_tracker (через tracker)
             if processing_status not in ["completed", "completed_by_tracker"]:
                 logger.warning(f"Задача {task_id} имеет неподдерживаемый статус '{processing_status}', пропускаем")
-                return True  # Считаем успешным, удаляем сообщение
+                return True, None  # Считаем успешным, удаляем сообщение
             
             # Дополнительная информация о типе обработки
             if processing_status == "completed_by_tracker":
@@ -606,8 +676,12 @@ class UniversalCamundaWorker:
             return self._complete_task_in_camunda(task_id, variables)
             
         except Exception as e:
-            logger.error(f"Ошибка обработки ответного сообщения: {e}")
-            return False
+            error_msg = f"Ошибка обработки ответного сообщения: {e}"
+            logger.error(error_msg)
+            return False, {
+                "type": "processing_exception",
+                "message": error_msg
+            }
     
     def _extract_response_data(self, response_data: Dict[str, Any], variables: Dict[str, Any]):
         """Извлечение данных из ответа системы и добавление в переменные Camunda"""
@@ -665,8 +739,15 @@ class UniversalCamundaWorker:
             logger.error(f"Ошибка извлечения данных из response_data: {e}")
             # Не прерываем выполнение, просто логируем ошибку
     
-    def _complete_task_in_camunda(self, task_id: str, variables: Dict[str, Any]) -> bool:
-        """Завершение задачи в Camunda через REST API"""
+    def _complete_task_in_camunda(self, task_id: str, variables: Dict[str, Any]) -> Tuple[bool, Optional[Dict[str, Any]]]:
+        """
+        Завершение задачи в Camunda через REST API.
+        
+        Returns:
+            Tuple[bool, Optional[Dict]]: 
+                - (True, None) при успехе
+                - (False, error_info) при ошибке, где error_info содержит детали ошибки
+        """
         try:
             # Формируем URL для завершения задачи
             base_url = self.config.base_url.rstrip('/')
@@ -704,49 +785,81 @@ class UniversalCamundaWorker:
                 request_duration = time.time() - start_time
                 
             except requests.exceptions.Timeout:
-                logger.error(f"⏰ Таймаут запроса к Camunda для задачи {task_id} (>10с)")
-                return False
+                error_msg = f"Таймаут запроса к Camunda для задачи {task_id} (>10с)"
+                logger.error(f"⏰ {error_msg}")
+                return False, {
+                    "type": "timeout_error",
+                    "message": error_msg,
+                    "http_status_code": None
+                }
             except requests.exceptions.ConnectionError as e:
-                logger.error(f"🔌 Ошибка соединения с Camunda для задачи {task_id}: {e}")
-                return False
+                error_msg = f"Ошибка соединения с Camunda для задачи {task_id}: {e}"
+                logger.error(f"🔌 {error_msg}")
+                return False, {
+                    "type": "connection_error",
+                    "message": error_msg,
+                    "http_status_code": None
+                }
             except requests.exceptions.RequestException as e:
-                logger.error(f"🌐 Ошибка HTTP запроса к Camunda для задачи {task_id}: {e}")
-                return False
-            
-
+                error_msg = f"Ошибка HTTP запроса к Camunda для задачи {task_id}: {e}"
+                logger.error(f"🌐 {error_msg}")
+                return False, {
+                    "type": "request_error",
+                    "message": error_msg,
+                    "http_status_code": None
+                }
             
             if response.status_code == 204:
                 self.stats["successful_completions"] += 1
-                return True
+                return True, None
             elif response.status_code == 404:
                 logger.warning(f"🔍 Задача {task_id} не найдена в Camunda (возможно уже завершена или истёк lock)")
                 # Считаем это успехом - задача больше не активна
                 self.stats["successful_completions"] += 1
-                return True
+                return True, None
             elif response.status_code == 500:
                 logger.error(f"💥 Внутренняя ошибка Camunda для задачи {task_id}: {response.text}")
-                # Попробуем получить более детальную информацию об ошибке
+                # Получаем детальную информацию об ошибке
+                error_info = {
+                    "type": "camunda_internal_error",
+                    "message": f"Internal server error from Camunda",
+                    "http_status_code": 500,
+                    "raw_response": response.text
+                }
                 try:
                     error_data = response.json()
                     error_type = error_data.get("type", "unknown")
                     error_message = error_data.get("message", "unknown")
                     logger.error(f"   Тип ошибки: {error_type}")
                     logger.error(f"   Сообщение: {error_message}")
+                    error_info["camunda_error_type"] = error_type
+                    error_info["camunda_error_message"] = error_message
                 except:
                     pass
                 self.stats["failed_completions"] += 1
-                return False
+                return False, error_info
             else:
-                logger.error(f"❌ Неожиданный код ответа от Camunda для задачи {task_id}: HTTP {response.status_code} - {response.text}")
+                error_msg = f"Неожиданный код ответа от Camunda: HTTP {response.status_code}"
+                logger.error(f"❌ {error_msg} для задачи {task_id} - {response.text}")
                 self.stats["failed_completions"] += 1
-                return False
+                return False, {
+                    "type": "unexpected_http_status",
+                    "message": error_msg,
+                    "http_status_code": response.status_code,
+                    "raw_response": response.text
+                }
                 
         except Exception as e:
-            logger.error(f"💥 Исключение при завершении задачи {task_id} в Camunda: {e}")
+            error_msg = f"Исключение при завершении задачи {task_id} в Camunda: {e}"
+            logger.error(f"💥 {error_msg}")
             import traceback
             traceback.print_exc()
             self.stats["failed_completions"] += 1
-            return False
+            return False, {
+                "type": "exception",
+                "message": error_msg,
+                "http_status_code": None
+            }
     
     def _format_variables(self, variables: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
         """Форматирование переменных для Camunda API"""
