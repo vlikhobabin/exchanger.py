@@ -11,6 +11,7 @@
    - [UserFieldsHandler - Пользовательские поля задач](#userfieldshandler---пользовательские-поля-задач)
    - [UserSupervisorHandler - Руководители пользователей](#usersupervisorhandler---руководители-пользователей)
    - [TaskTemplateHandler - Шаблоны задач](#tasktemplatehandler---шаблоны-задач)
+  - [TaskDependencyHandler - Зависимости задач](#taskdependencyhandler---зависимости-задач)
 5. [Примеры использования](#примеры-использования)
 6. [Тестирование](#тестирование)
 7. [Решение проблем](#решение-проблем)
@@ -421,14 +422,15 @@ curl "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.diagram.prope
 
 #### Метод: `imena.camunda.diagram.responsible.list`
 
-**Описание:** Возвращает список ответственных диаграммы Storm по `DIAGRAM_ID`.
+**Описание:** Возвращает список ответственных диаграммы Storm по `CAMUNDA_PROCESS_ID` (рекомендуемый вариант) или по `DIAGRAM_ID`.
 
-**Параметры запроса:**
-- `diagramId` (обязательный) - ID диаграммы (например: `storm-diagram-uuid`)
+**Параметры запроса (укажите хотя бы один идентификатор):**
+- `camundaProcessId` — `CAMUNDA_PROCESS_ID` диаграммы из таблицы `b_imena_storm_diagrams`
+- `diagramId` — ID диаграммы Storm (например: `storm-diagram-uuid`)
 
-**Пример вызова:**
+**Пример вызова (через camundaProcessId):**
 ```bash
-curl "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.diagram.responsible.list?diagramId=a3e6a21f-2686-4a3f-a05e-3badbd04b33c"
+curl "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.diagram.responsible.list?camundaProcessId=Process_tvkt6gpec"
 ```
 
 **Пример ответа:**
@@ -461,7 +463,8 @@ curl "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.diagram.respo
           "UPDATED_BY": null,
           "VERSION_NUMBER": 1,
           "SORT_INDEX": 240000210,
-          "PREDECESSOR_IDS": []
+          "PREDECESSOR_IDS": [],
+          "CAMUNDA_PROCESS_ID": "Process_tvkt6gpec"
         },
         {
           "ID": 3312,
@@ -486,11 +489,13 @@ curl "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.diagram.respo
           "UPDATED_BY": null,
           "VERSION_NUMBER": 1,
           "SORT_INDEX": 390000210,
-          "PREDECESSOR_IDS": ["Activity_02iom23"]
+          "PREDECESSOR_IDS": ["Activity_02iom23"],
+          "CAMUNDA_PROCESS_ID": "Process_tvkt6gpec"
         }
       ],
       "meta": {
         "diagramId": "a3e6a21f-2686-4a3f-a05e-3badbd04b33c",
+        "camundaProcessId": "Process_tvkt6gpec",
         "count": 8
       }
     }
@@ -508,15 +513,16 @@ curl "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.diagram.respo
 
 #### Метод: `imena.camunda.diagram.responsible.get`
 
-**Описание:** Возвращает одну запись ответственного по `DIAGRAM_ID` и `ELEMENT_ID`.
+**Описание:** Возвращает одну запись ответственного по `CAMUNDA_PROCESS_ID` (или `DIAGRAM_ID`) и `ELEMENT_ID`.
 
 **Параметры запроса:**
-- `diagramId` (обязательный) - ID диаграммы
-- `elementId` (обязательный) - ID элемента диаграммы (Activity)
+- `camundaProcessId` — CAMUNDA_PROCESS_ID диаграммы (рекомендуемый способ)
+- `diagramId` — ID диаграммы Storm (опциональный параметр)
+- `elementId` (обязательный) — ID элемента диаграммы (Activity)
 
-**Пример вызова:**
+**Пример вызова (через camundaProcessId):**
 ```bash
-curl "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.diagram.responsible.get?diagramId=a3e6a21f-2686-4a3f-a05e-3badbd04b33c&elementId=Activity_0qu7rkw"
+curl "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.diagram.responsible.get?camundaProcessId=Process_tvkt6gpec&elementId=Activity_0qu7rkw"
 ```
 
 **Пример ответа:**
@@ -548,10 +554,12 @@ curl "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.diagram.respo
         "UPDATED_BY": null,
         "VERSION_NUMBER": 1,
         "SORT_INDEX": 390000210,
-        "PREDECESSOR_IDS": ["Activity_02iom23"]
+        "PREDECESSOR_IDS": ["Activity_02iom23"],
+        "CAMUNDA_PROCESS_ID": "Process_tvkt6gpec"
       },
       "meta": {
         "diagramId": "a3e6a21f-2686-4a3f-a05e-3badbd04b33c",
+        "camundaProcessId": "Process_tvkt6gpec",
         "elementId": "Activity_0qu7rkw"
       }
     }
@@ -567,6 +575,7 @@ curl "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.diagram.respo
 - `TEMPLATE_ID` - ID шаблона задачи из `b_imena_tasks_templates`
 - `ASSIGNEE_TYPE` - Тип назначения (`HUMAN`, `ROLE`, `GROUP`, `SYSTEM`)
 - `USER_ID` - ID пользователя Bitrix24 (если назначен)
+- `CAMUNDA_PROCESS_ID` - ID процесса Camunda, к которому относится диаграмма
 - `CREATED_ON` - Дата создания в формате `Y-m-d H:i:s`
 - `UPDATED_ON` - Дата обновления в формате `Y-m-d H:i:s`
 - `SORT_INDEX` - Индекс сортировки элементов по координатам на диаграмме
@@ -579,6 +588,7 @@ curl "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.diagram.respo
 - Даты нормализуются в строковый формат `Y-m-d H:i:s`
 - `PREDECESSOR_IDS` парсится из JSON строки в массив
 - Пустые значения возвращаются как `null`
+- Можно передавать `camundaProcessId` вместо `diagramId` — обработчик автоматически объединяет `b_imena_storm_responsible` и `b_imena_storm_diagrams` по `DIAGRAM_ID`
 
 ---
 
@@ -855,60 +865,7 @@ curl "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.tasktemplate.
     "data": {
       "template": {
         "ID": 1,
-        "TITLE": "Шаблон задачи",
-        "DESCRIPTION": "Описание шаблона",
-        "CREATED_BY": 1,
-        "CREATED_AT": "2025-01-01 12:00:00"
-      },
-      "members": {
-        "all": [
-          {
-            "ID": 1,
-            "TEMPLATE_ID": 1,
-            "USER_ID": 42,
-            "TYPE": "R"
-          }
-        ],
-        "by_type": {
-          "R": [{"ID": 1, "TEMPLATE_ID": 1, "USER_ID": 42, "TYPE": "R"}],
-          "A": [],
-          "U": []
-        }
-      },
-      "tags": [
-        {
-          "ID": 1,
-          "TEMPLATE_ID": 1,
-          "NAME": "важный"
-        }
-      ],
-      "checklists": {
-        "items": [
-          {
-            "item": {
-              "ID": 1,
-              "TEMPLATE_ID": 1,
-              "TITLE": "Пункт чек-листа",
-              "CHECKED": "N",
-              "IS_IMPORTANT": "N",
-              "SORT": 100
-            },
-            "members": [],
-            "tree": {
-              "parent_id": null,
-              "child_ids": [],
-              "level": 0
-            }
-          }
-        ],
-        "total": 1,
-        "has_tree": false
-      },
-      "files": [],
-      "meta": {
-        "camundaProcessId": "Process_syi17nb19",
-        "elementId": "Activity_0tqmi90",
-        "templateId": 1
+        // ...
       }
     }
   }
@@ -917,18 +874,52 @@ curl "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.tasktemplate.
 
 **Особенности:**
 - Находит шаблон через JOIN: `b_imena_storm_diagrams` → `b_imena_storm_responsible` → `b_imena_tasks_templates`
-- Возвращает полную структуру шаблона:
-  - Основные данные шаблона
-  - Участники (группировка по типам: R=Responsible, A=Accomplice, U=Auditor)
-  - Теги
-  - Чек-листы с древовидной структурой и участниками
-  - Файлы из Bitrix Disk (UF_TASK_WEBDAV_FILES)
-- Поддерживает древовидную структуру чек-листов (parent-child связи)
+- Возвращает полную структуру шаблона (теги, чек-листы, участники, файлы)
+
+---
+
+### TaskDependencyHandler - Зависимости задач
+
+**Файл:** `/local/modules/imena.camunda/lib/Rest/TaskDependencyHandler.php`
+**Назначение:** Управление зависимостями задач (Диаграмма Ганта).
+
+#### Метод: `imena.camunda.task.dependency.add`
+
+**Описание:** Создает связь типа "Конец-Старт" (Finish-Start) между двумя задачами. Текущая задача (`taskId`) начнется после завершения предшествующей (`dependsOnId`).
+
+**Параметры запроса:**
+- `taskId` (обязательный) - ID задачи-последователя (которая зависит)
+- `dependsOnId` (обязательный) - ID задачи-предшественника (от которой зависят)
+
+**Пример вызова:**
+```bash
+curl -X POST "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.task.dependency.add" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "taskId": 366,
+    "dependsOnId": 365
+  }'
+```
+
+**Пример ответа:**
+```json
+{
+  "result": {
+    "success": true,
+    "data": {
+      "taskId": 366,
+      "dependsOnId": 365,
+      "type": 2,
+      "typeDescription": "Finish-Start"
+    }
+  }
+}
+```
 
 **Ошибки:**
-- `Missing required parameter: camundaProcessId` - Не указан camundaProcessId
-- `Missing required parameter: elementId` - Не указан elementId
-- `404` - Шаблон не найден для указанных параметров
+- `Invalid taskId/dependsOnId` - Некорректные ID
+- `Task cannot depend on itself` - Попытка связать задачу саму с собой
+- `ERROR_ADDING_DEPENDENCY` - Внутренняя ошибка при создании связи (циклическая зависимость и т.д.)
 
 ---
 
@@ -1030,13 +1021,13 @@ curl "https://bx-dev.eg-holding.ru/rest/1/tip76z85stzjop28/imena.camunda.diagram
 **Метод:** [`imena.camunda.diagram.responsible.list`](#метод-imenacamundadiagramresponsiblelist)
 
 ```bash
-curl "https://bx-dev.eg-holding.ru/rest/1/tip76z85stzjop28/imena.camunda.diagram.responsible.list?diagramId=a3e6a21f-2686-4a3f-a05e-3badbd04b33c"
+curl "https://bx-dev.eg-holding.ru/rest/1/tip76z85stzjop28/imena.camunda.diagram.responsible.list?camundaProcessId=Process_tvkt6gpec"
 ```
 
 **Использование для получения всех элементов диаграммы с их шаблонами:**
 ```bash
 # Получаем список ответственных
-RESPONSIBLES=$(curl -s "https://bx-dev.eg-holding.ru/rest/1/tip76z85stzjop28/imena.camunda.diagram.responsible.list?diagramId=a3e6a21f-2686-4a3f-a05e-3badbd04b33c")
+RESPONSIBLES=$(curl -s "https://bx-dev.eg-holding.ru/rest/1/tip76z85stzjop28/imena.camunda.diagram.responsible.list?camundaProcessId=Process_tvkt6gpec")
 
 # Извлекаем TEMPLATE_ID для каждого элемента
 echo "$RESPONSIBLES" | jq '.result.data.responsibles[] | {element: .ELEMENT_ID, template: .TEMPLATE_ID, predecessors: .PREDECESSOR_IDS}'
@@ -1047,7 +1038,7 @@ echo "$RESPONSIBLES" | jq '.result.data.responsibles[] | {element: .ELEMENT_ID, 
 **Метод:** [`imena.camunda.diagram.responsible.get`](#метод-imenacamundadiagramresponsibleget)
 
 ```bash
-curl "https://bx-dev.eg-holding.ru/rest/1/tip76z85stzjop28/imena.camunda.diagram.responsible.get?diagramId=a3e6a21f-2686-4a3f-a05e-3badbd04b33c&elementId=Activity_0qu7rkw"
+curl "https://bx-dev.eg-holding.ru/rest/1/tip76z85stzjop28/imena.camunda.diagram.responsible.get?camundaProcessId=Process_tvkt6gpec&elementId=Activity_0qu7rkw"
 ```
 
 ### Пример 8: Проверка существования пользовательского поля
@@ -1399,6 +1390,7 @@ error_log("YourHandler: Processing request with ID={$id}");
 | `imena.camunda.userfield.exists` | [UserFieldsHandler](#userfieldshandler---пользовательские-поля-задач) | Проверка существования поля |
 | `imena.camunda.user.supervisor.get` | [UserSupervisorHandler](#usersupervisorhandler---руководители-пользователей) | Получение руководителя пользователя |
 | `imena.camunda.tasktemplate.get` | [TaskTemplateHandler](#tasktemplatehandler---шаблоны-задач) | Получение шаблона задачи |
+| `imena.camunda.task.dependency.add` | [TaskDependencyHandler](#taskdependencyhandler---зависимости-задач) | Создание зависимости (Gantt) |
 
 ### Структура файлов:
 
@@ -1410,6 +1402,7 @@ error_log("YourHandler: Processing request with ID={$id}");
 ├── UserFieldsHandler.php              # Пользовательские поля задач
 ├── UserSupervisorHandler.php          # Руководители пользователей
 ├── TaskTemplateHandler.php            # Шаблоны задач
+├── TaskDependencyHandler.php          # Зависимости задач (Gantt)
 └── README.md                          # Эта документация
 ```
 

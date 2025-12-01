@@ -49,7 +49,11 @@ class BitrixTaskHandler:
             "template_files_failed": 0,
             "dependencies_attempted": 0,
             "dependencies_created": 0,
-            "dependencies_failed": 0
+            "dependencies_failed": 0,
+            "predecessor_results_fetched": 0,
+            "predecessor_results_failed": 0,
+            "predecessor_files_attached": 0,
+            "predecessor_files_failed": 0
         }
 
         # Кэш параметров диаграмм Camunda -> Bitrix24
@@ -265,6 +269,21 @@ class BitrixTaskHandler:
                 responsible_info=responsible_info
             )
             
+            # Шаг 3.3: Получение и добавление результатов предшествующих задач
+            predecessor_results: Dict[int, List[Dict[str, Any]]] = {}
+            if predecessor_task_ids:
+                predecessor_results = self._get_predecessor_results(predecessor_task_ids)
+                if predecessor_results:
+                    # Добавляем блок текста с результатами в описание
+                    results_block = self._build_predecessor_results_block(predecessor_results)
+                    if results_block:
+                        current_description = task_data.get('DESCRIPTION', '') or ''
+                        if current_description:
+                            task_data['DESCRIPTION'] = f"{current_description.rstrip()}\n\n---\n{results_block}"
+                        else:
+                            task_data['DESCRIPTION'] = results_block
+                        logger.debug(f"Добавлен блок результатов предшественников в описание задачи {task_id}")
+            
             # Шаг 4: Создание задачи в Bitrix24
             result = self._send_task_to_bitrix(task_data)
             
@@ -289,6 +308,13 @@ class BitrixTaskHandler:
                         self._create_task_dependencies(int(created_task_id), predecessor_task_ids)
                     except Exception as e:
                         logger.error(f"Ошибка создания зависимостей для задачи {created_task_id}: {e}")
+                    
+                    # Прикрепление файлов из результатов предшествующих задач
+                    if predecessor_results:
+                        try:
+                            self._attach_predecessor_files(int(created_task_id), predecessor_results)
+                        except Exception as e:
+                            logger.error(f"Ошибка прикрепления файлов предшественников к задаче {created_task_id}: {e}")
                     
                     checklists_data = self._extract_checklists_from_template(template_data)
                     
@@ -747,6 +773,253 @@ class BitrixTaskHandler:
                 logger.error(
                     f"Неожиданная ошибка при добавлении зависимости taskId={task_id}: {e}"
                 )
+
+    def _get_task_results(self, task_id: int) -> List[Dict[str, Any]]:
+        """
+        Получение результатов задачи через API tasks.task.result.list
+        и дополнительных данных о файлах через task.commentitem.get.
+        
+        Args:
+            task_id: ID задачи в Bitrix24
+            
+        Returns:
+            Список результатов с текстом и информацией о файлах:
+            [
+                {
+                    'id': int,
+                    'text': str,
+                    'formattedText': str,
+                    'createdAt': str,
+                    'files': [
+                        {
+                            'name': str,
+                            'size': int,
+                            'fileId': int,
+                            'attachmentId': int,
+                            'downloadUrl': str
+                        }
+                    ]
+                }
+            ]
+        """
+        results = []
+        
+        try:
+            # Шаг 1: Получаем результаты задачи
+            result_list_url = f"{self.config.webhook_url.rstrip('/')}/tasks.task.result.list.json"
+            response = requests.post(
+                result_list_url,
+                json={"taskId": task_id},
+                timeout=self.config.request_timeout
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            raw_results = data.get('result', [])
+            if not raw_results:
+                logger.debug(f"Нет результатов для задачи {task_id}")
+                return []
+            
+            # Шаг 2: Для каждого результата получаем детали комментария (для файлов)
+            for result_item in raw_results:
+                comment_id = result_item.get('commentId')
+                result_entry = {
+                    'id': result_item.get('id'),
+                    'text': result_item.get('text', ''),
+                    'formattedText': result_item.get('formattedText', ''),
+                    'createdAt': result_item.get('createdAt', ''),
+                    'files': []
+                }
+                
+                # Если есть файлы, получаем детали через task.commentitem.get
+                file_ids = result_item.get('files', [])
+                if file_ids and comment_id:
+                    try:
+                        comment_url = f"{self.config.webhook_url.rstrip('/')}/task.commentitem.get.json"
+                        comment_response = requests.post(
+                            comment_url,
+                            json={"TASKID": task_id, "ITEMID": comment_id},
+                            timeout=self.config.request_timeout
+                        )
+                        comment_response.raise_for_status()
+                        comment_data = comment_response.json()
+                        
+                        attached_objects = comment_data.get('result', {}).get('ATTACHED_OBJECTS', {})
+                        for attach_id, attach_info in attached_objects.items():
+                            file_entry = {
+                                'name': attach_info.get('NAME', f'file_{attach_id}'),
+                                'size': int(attach_info.get('SIZE', 0)),
+                                'fileId': int(attach_info.get('FILE_ID', 0)),
+                                'attachmentId': int(attach_info.get('ATTACHMENT_ID', attach_id)),
+                                'downloadUrl': attach_info.get('DOWNLOAD_URL', '')
+                            }
+                            result_entry['files'].append(file_entry)
+                            
+                    except Exception as e:
+                        logger.warning(f"Ошибка получения файлов комментария {comment_id} задачи {task_id}: {e}")
+                
+                results.append(result_entry)
+            
+            self.stats["predecessor_results_fetched"] += 1
+            logger.debug(f"Получено {len(results)} результатов задачи {task_id}")
+            
+        except requests.exceptions.RequestException as e:
+            self.stats["predecessor_results_failed"] += 1
+            logger.warning(f"Ошибка запроса результатов задачи {task_id}: {e}")
+        except Exception as e:
+            self.stats["predecessor_results_failed"] += 1
+            logger.warning(f"Неожиданная ошибка получения результатов задачи {task_id}: {e}")
+        
+        return results
+
+    def _get_predecessor_results(
+        self, 
+        predecessor_task_ids: List[int]
+    ) -> Dict[int, List[Dict[str, Any]]]:
+        """
+        Получение результатов всех задач-предшественников.
+        
+        Args:
+            predecessor_task_ids: Список ID задач-предшественников
+            
+        Returns:
+            Словарь {task_id: [results]}
+        """
+        if not predecessor_task_ids:
+            return {}
+        
+        predecessor_results: Dict[int, List[Dict[str, Any]]] = {}
+        
+        for task_id in predecessor_task_ids:
+            results = self._get_task_results(task_id)
+            if results:
+                predecessor_results[task_id] = results
+                logger.info(f"Получено {len(results)} результатов от задачи-предшественника {task_id}")
+        
+        return predecessor_results
+
+    def _build_predecessor_results_block(
+        self, 
+        predecessor_results: Dict[int, List[Dict[str, Any]]]
+    ) -> Optional[str]:
+        """
+        Формирование блока текста с результатами предшествующих задач.
+        
+        Args:
+            predecessor_results: Словарь {task_id: [results]} с результатами задач
+            
+        Returns:
+            Отформатированный блок текста или None если результатов нет
+        """
+        if not predecessor_results:
+            return None
+        
+        lines = ["[B]📋 Результаты предшествующих задач:[/B]"]
+        lines.append("")
+        
+        for task_id, results in predecessor_results.items():
+            lines.append(f"[B]Задача №{task_id}:[/B]")
+            
+            for idx, result in enumerate(results, 1):
+                # Очищаем текст от HTML-сущностей
+                text = result.get('text', '') or result.get('formattedText', '')
+                if text:
+                    # Заменяем HTML-сущности
+                    text = text.replace('&quot;', '"').replace('&amp;', '&')
+                    text = text.replace('&lt;', '<').replace('&gt;', '>')
+                    text = text.replace('\u00a0', ' ')  # неразрывный пробел
+                    
+                    if len(results) > 1:
+                        lines.append(f"  {idx}. {text}")
+                    else:
+                        lines.append(f"  • {text}")
+                
+                # Если есть файлы, указываем их
+                files = result.get('files', [])
+                if files:
+                    file_names = [f.get('name', 'файл') for f in files]
+                    lines.append(f"     📎 Файлы: {', '.join(file_names)}")
+            
+            lines.append("")
+        
+        return "\n".join(lines)
+
+    def _attach_predecessor_files(
+        self, 
+        task_id: int, 
+        predecessor_results: Dict[int, List[Dict[str, Any]]]
+    ) -> None:
+        """
+        Прикрепление файлов из результатов предшествующих задач к созданной задаче.
+        
+        Использует скачивание файлов через DOWNLOAD_URL и загрузку через disk API,
+        затем прикрепление к задаче.
+        
+        Args:
+            task_id: ID созданной задачи
+            predecessor_results: Словарь с результатами предшественников
+        """
+        if not predecessor_results:
+            return
+        
+        # Собираем все файлы из результатов
+        all_files: List[Dict[str, Any]] = []
+        for pred_task_id, results in predecessor_results.items():
+            for result in results:
+                for file_info in result.get('files', []):
+                    file_info['source_task_id'] = pred_task_id
+                    all_files.append(file_info)
+        
+        if not all_files:
+            logger.debug(f"Нет файлов для прикрепления от предшественников к задаче {task_id}")
+            return
+        
+        logger.info(f"Прикрепление {len(all_files)} файлов от предшественников к задаче {task_id}")
+        
+        # Прикрепляем файлы через FILE_ID (disk file id)
+        api_url = f"{self.config.webhook_url.rstrip('/')}/tasks.task.files.attach.json"
+        
+        for file_info in all_files:
+            file_id = file_info.get('fileId')
+            file_name = file_info.get('name', 'unknown')
+            source_task = file_info.get('source_task_id')
+            
+            if not file_id:
+                logger.warning(f"Пропуск файла '{file_name}' без fileId (source_task={source_task})")
+                self.stats["predecessor_files_failed"] += 1
+                continue
+            
+            payload = {
+                "taskId": task_id,
+                "fileId": file_id
+            }
+            
+            try:
+                logger.debug(f"Прикрепление файла '{file_name}' (fileId={file_id}) от задачи {source_task}")
+                response = requests.post(api_url, data=payload, timeout=self.config.request_timeout)
+                
+                try:
+                    data = response.json()
+                except json.JSONDecodeError:
+                    self.stats["predecessor_files_failed"] += 1
+                    logger.error(f"Некорректный JSON при прикреплении файла '{file_name}': {response.text}")
+                    continue
+                
+                if response.status_code != 200 or data.get('error'):
+                    error_desc = data.get('error_description', data.get('error', 'Неизвестная ошибка'))
+                    logger.warning(f"Ошибка прикрепления файла '{file_name}' к задаче {task_id}: {error_desc}")
+                    self.stats["predecessor_files_failed"] += 1
+                    continue
+                
+                self.stats["predecessor_files_attached"] += 1
+                logger.info(f"✅ Файл '{file_name}' от задачи {source_task} прикреплён к задаче {task_id}")
+                
+            except requests.exceptions.RequestException as e:
+                self.stats["predecessor_files_failed"] += 1
+                logger.error(f"Ошибка запроса при прикреплении файла '{file_name}': {e}")
+            except Exception as e:
+                self.stats["predecessor_files_failed"] += 1
+                logger.error(f"Неожиданная ошибка при прикреплении файла '{file_name}': {e}")
 
     def _find_task_by_element_id(self, element_id: Optional[str]) -> Optional[Dict[str, Any]]:
         """
@@ -1509,6 +1782,20 @@ class BitrixTaskHandler:
                 responsible_info=responsible_info
             )
             
+            # Получение и добавление результатов предшествующих задач (fallback)
+            predecessor_results: Dict[int, List[Dict[str, Any]]] = {}
+            if predecessor_task_ids:
+                predecessor_results = self._get_predecessor_results(predecessor_task_ids)
+                if predecessor_results:
+                    results_block = self._build_predecessor_results_block(predecessor_results)
+                    if results_block:
+                        current_description = task_data.get('DESCRIPTION', '') or ''
+                        if current_description:
+                            task_data['DESCRIPTION'] = f"{current_description.rstrip()}\n\n---\n{results_block}"
+                        else:
+                            task_data['DESCRIPTION'] = results_block
+                        logger.debug(f"Fallback: Добавлен блок результатов предшественников")
+            
             result = self._send_task_to_bitrix(task_data)
 
             if result and result.get('result') and result['result'].get('task'):
@@ -1518,6 +1805,13 @@ class BitrixTaskHandler:
                         self._create_task_dependencies(int(created_task_id), predecessor_task_ids)
                     except Exception as e:
                         logger.error(f"Ошибка создания зависимостей (fallback) для задачи {created_task_id}: {e}")
+                    
+                    # Прикрепление файлов из результатов предшествующих задач (fallback)
+                    if predecessor_results:
+                        try:
+                            self._attach_predecessor_files(int(created_task_id), predecessor_results)
+                        except Exception as e:
+                            logger.error(f"Ошибка прикрепления файлов предшественников (fallback) к задаче {created_task_id}: {e}")
             
             return result
             
@@ -1550,6 +1844,18 @@ class BitrixTaskHandler:
                     'error': 'VALIDATION_ERROR',
                     'error_description': error_msg
                 }
+            
+            # Добавляем SE_PARAMETER для всех задач:
+            # CODE=3, VALUE='Y' — "Не завершать задачу без результата"
+            # Это гарантирует, что задачи из Camunda требуют явного результата при закрытии
+            if 'SE_PARAMETER' not in task_data:
+                task_data['SE_PARAMETER'] = []
+            
+            # Проверяем, не установлен ли уже параметр CODE=3
+            existing_codes = {p.get('CODE') for p in task_data.get('SE_PARAMETER', []) if isinstance(p, dict)}
+            if 3 not in existing_codes:
+                task_data['SE_PARAMETER'].append({'CODE': 3, 'VALUE': 'Y'})
+                logger.debug("Добавлен параметр SE_PARAMETER: CODE=3 (PARAM_RESULT_REQUIRED), VALUE='Y'")
             
             payload = {'fields': task_data}
             
