@@ -53,7 +53,10 @@ class BitrixTaskHandler:
             "predecessor_results_fetched": 0,
             "predecessor_results_failed": 0,
             "predecessor_files_attached": 0,
-            "predecessor_files_failed": 0
+            "predecessor_files_failed": 0,
+            "questionnaires_found": 0,
+            "questionnaires_sent": 0,
+            "questionnaires_failed": 0
         }
 
         # Кэш параметров диаграмм Camunda -> Bitrix24
@@ -231,6 +234,8 @@ class BitrixTaskHandler:
                     )
                 return self._create_task_fallback(message_data)
 
+            questionnaires_data: List[Dict[str, Any]] = self._extract_questionnaires_from_template(template_data)
+
             diagram_id = self._resolve_diagram_id(
                 diagram_id,
                 camunda_process_id,
@@ -319,6 +324,17 @@ class BitrixTaskHandler:
                             self._attach_predecessor_files(int(created_task_id), predecessor_results)
                         except Exception as e:
                             logger.error(f"Ошибка прикрепления файлов предшественников к задаче {created_task_id}: {e}")
+
+                    if questionnaires_data:
+                        try:
+                            logger.info(f"Добавление {len(questionnaires_data)} анкет в задачу {created_task_id}")
+                            success = self._add_questionnaires_to_task(int(created_task_id), questionnaires_data)
+                            if success:
+                                logger.info(f"✅ Анкеты успешно добавлены к задаче {created_task_id}")
+                            else:
+                                logger.warning(f"⚠️ Анкеты не были добавлены к задаче {created_task_id}")
+                        except Exception as e:
+                            logger.error(f"Ошибка добавления анкет к задаче {created_task_id}: {e}")
                     
                     checklists_data = self._extract_checklists_from_template(template_data)
                     
@@ -2056,6 +2072,88 @@ class BitrixTaskHandler:
                 logger.debug(f"    - {j}. {item}")
         
         return result
+
+    def _extract_questionnaires_from_template(self, template_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Извлечение анкет из шаблона задачи (questionnaires.items)
+        """
+        if not template_data:
+            return []
+        
+        questionnaires_section = template_data.get('questionnaires') or {}
+        if not isinstance(questionnaires_section, dict):
+            logger.debug("Секция questionnaires имеет некорректный формат (ожидался dict)")
+            return []
+        
+        items = questionnaires_section.get('items')
+        if not items:
+            logger.debug("Секция questionnaires отсутствует или items пустой")
+            return []
+        
+        if not isinstance(items, list):
+            logger.debug("questionnaires.items имеет некорректный формат (ожидался list)")
+            return []
+        
+        self.stats["questionnaires_found"] += len(items)
+        logger.debug(f"Извлечено {len(items)} анкет из шаблона")
+        return items
+
+    def _add_questionnaires_to_task(self, task_id: int, questionnaires: List[Dict[str, Any]]) -> bool:
+        """
+        Добавление анкет к созданной задаче через кастомный REST API Bitrix24
+        """
+        if not questionnaires:
+            logger.debug("Нет анкет для добавления в задачу")
+            return True
+        
+        api_url = f"{self.config.webhook_url.rstrip('/')}/imena.camunda.task.questionnaire.add"
+        payload = {
+            "taskId": task_id,
+            "questionnaires": questionnaires
+        }
+        
+        try:
+            response = requests.post(
+                api_url,
+                json=payload,
+                timeout=self.config.request_timeout,
+                headers={'Content-Type': 'application/json'}
+            )
+            response.raise_for_status()
+            result = response.json()
+            
+            api_result = result.get('result', {})
+            if api_result.get('success'):
+                created_ids = api_result.get('data', {}).get('createdIds', [])
+                created_count = api_result.get('data', {}).get('totalCreated')
+                if created_count is None:
+                    created_count = len(created_ids) if created_ids else len(questionnaires)
+                self.stats["questionnaires_sent"] += int(created_count)
+                logger.debug(f"Анкеты добавлены в задачу {task_id}: created_count={created_count}")
+                return True
+            
+            error_msg = api_result.get('error', 'Unknown error')
+            self.stats["questionnaires_failed"] += 1
+            logger.warning(f"Bitrix24 вернул ошибку при добавлении анкет в задачу {task_id}: {error_msg}")
+            logger.debug(f"Полный ответ API анкет: {json.dumps(api_result, ensure_ascii=False)}")
+            return False
+        
+        except requests.exceptions.Timeout:
+            self.stats["questionnaires_failed"] += 1
+            logger.error(f"Таймаут при добавлении анкет к задаче {task_id} (timeout={self.config.request_timeout}s)")
+            return False
+        except requests.exceptions.RequestException as e:
+            self.stats["questionnaires_failed"] += 1
+            logger.error(f"Ошибка запроса при добавлении анкет к задаче {task_id}: {e}")
+            return False
+        except json.JSONDecodeError as e:
+            self.stats["questionnaires_failed"] += 1
+            logger.error(f"Ошибка декодирования ответа при добавлении анкет к задаче {task_id}: {e}")
+            return False
+        except Exception as e:
+            self.stats["questionnaires_failed"] += 1
+            logger.error(f"Неожиданная ошибка при добавлении анкет к задаче {task_id}: {e}")
+            return False
     
     # ЗАКОММЕНТИРОВАНО: Используется API шаблонов задач
     # Дата: 2025-11-03
@@ -3287,6 +3385,9 @@ class BitrixTaskHandler:
                 self.stats["templates_found"] / self.stats["templates_requested"] * 100
                 if self.stats["templates_requested"] > 0 else 0
             ),
+            "questionnaires_found": self.stats["questionnaires_found"],
+            "questionnaires_sent": self.stats["questionnaires_sent"],
+            "questionnaires_failed": self.stats["questionnaires_failed"],
             "last_message_time": self.stats["last_message_time"],
             "publisher_stats": self.publisher.get_stats()
         }

@@ -11,7 +11,8 @@
    - [UserFieldsHandler - Пользовательские поля задач](#userfieldshandler---пользовательские-поля-задач)
    - [UserSupervisorHandler - Руководители пользователей](#usersupervisorhandler---руководители-пользователей)
    - [TaskTemplateHandler - Шаблоны задач](#tasktemplatehandler---шаблоны-задач)
-  - [TaskDependencyHandler - Зависимости задач](#taskdependencyhandler---зависимости-задач)
+   - [TaskQuestionnaireHandler - Анкеты задач](#taskquestionnairehandler---анкеты-задач)
+   - [TaskDependencyHandler - Зависимости задач](#taskdependencyhandler---зависимости-задач)
 5. [Примеры использования](#примеры-использования)
 6. [Тестирование](#тестирование)
 7. [Решение проблем](#решение-проблем)
@@ -841,7 +842,7 @@ curl "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.user.supervis
 
 ### TaskTemplateHandler - Шаблоны задач
 
-**Файл:** `/local/modules/imena.camunda/lib/Rest/TaskTemplateHandler.php`  
+**Файл:** `/local/modules/imena.camunda/lib/Rest/TaskTemplateHandler.php`
 **Назначение:** Получение шаблонов задач для создания задач в Bitrix24 по этапам процессов Camunda.
 
 #### Метод: `imena.camunda.tasktemplate.get`
@@ -865,16 +866,301 @@ curl "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.tasktemplate.
     "data": {
       "template": {
         "ID": 1,
-        // ...
+        "TITLE": "Название шаблона",
+        "DESCRIPTION": "Описание задачи",
+        "RESPONSIBLE_ID": 1,
+        "...": "другие поля шаблона"
+      },
+      "members": {
+        "all": [...],
+        "by_type": {
+          "R": [...],
+          "A": [...],
+          "U": [...]
+        }
+      },
+      "tags": [...],
+      "checklists": {
+        "items": [...],
+        "total": 4,
+        "has_tree": true
+      },
+      "files": [...],
+      "questionnaires": {
+        "items": [
+          {
+            "ID": 2,
+            "TEMPLATE_ID": 3348,
+            "CODE": "it",
+            "TITLE": "Техника",
+            "SORT": 100,
+            "questions": [
+              {
+                "ID": 2,
+                "QUESTIONNAIRE_TEMPLATE_ID": 2,
+                "CODE": "note",
+                "TEXT": "Нужен ноут?",
+                "TYPE": "radio",
+                "IS_REQUIRED": "Y",
+                "options": [
+                  {"ID": 3, "CODE": "yes", "TEXT": "Да", "SORT": 100},
+                  {"ID": 4, "CODE": "no", "TEXT": "Нет", "SORT": 200}
+                ]
+              }
+            ]
+          }
+        ],
+        "total": 1,
+        "has_codes": true
+      },
+      "meta": {
+        "camundaProcessId": "Process_qunad56t0",
+        "elementId": "Activity_1522g7n",
+        "templateId": 3348
       }
     }
   }
 }
 ```
 
+**Структура ответа:**
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `template` | object | Основные данные шаблона из `b_imena_tasks_templates` |
+| `members` | object | Участники шаблона (ответственные R, соисполнители A, наблюдатели U) |
+| `tags` | array | Теги шаблона |
+| `checklists` | object | Чек-листы с древовидной структурой |
+| `files` | array | Прикрепленные файлы (Bitrix Disk) |
+| `questionnaires` | object | **Анкеты с CODE полями для Camunda интеграции** |
+| `meta` | object | Метаданные запроса |
+
+**Структура questionnaires (Анкеты):**
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `items` | array | Массив анкет с полной структурой |
+| `total` | int | Общее количество анкет |
+| `has_codes` | bool | Наличие CODE полей для интеграции с Camunda |
+
+**Структура анкеты (questionnaires.items[]):**
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `ID` | int | ID анкеты шаблона |
+| `TEMPLATE_ID` | int | ID шаблона задачи |
+| `CODE` | string\|null | Уникальный код анкеты для Camunda |
+| `TITLE` | string | Название анкеты |
+| `SORT` | int | Сортировка |
+| `questions` | array | Массив вопросов |
+
+**Структура вопроса (questions[]):**
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `ID` | int | ID вопроса |
+| `CODE` | string\|null | Уникальный код вопроса для Camunda |
+| `TEXT` | string | Текст вопроса |
+| `TYPE` | string | Тип: `radio` (один ответ) или `checkbox` (несколько) |
+| `IS_REQUIRED` | string | Обязательность: `Y` или `N` |
+| `options` | array | Массив вариантов ответа |
+
+**Структура варианта ответа (options[]):**
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `ID` | int | ID варианта |
+| `CODE` | string\|null | Уникальный код варианта для Camunda |
+| `TEXT` | string | Текст варианта |
+| `SORT` | int | Сортировка |
+
+**Использование CODE полей в Camunda:**
+
+CODE поля позволяют формировать переменные процесса Camunda в формате:
+```
+{questionnaire_code}_{question_code} = {option_code}
+```
+
+Например, для анкеты с CODE=`it`, вопроса с CODE=`note` и выбранного варианта с CODE=`yes`:
+```
+it_note = yes
+```
+
+Это позволяет использовать результаты анкет в gateway-условиях BPMN:
+```
+${it_note == 'yes'}
+```
+
 **Особенности:**
 - Находит шаблон через JOIN: `b_imena_storm_diagrams` → `b_imena_storm_responsible` → `b_imena_tasks_templates`
-- Возвращает полную структуру шаблона (теги, чек-листы, участники, файлы)
+- Возвращает полную структуру шаблона (теги, чек-листы, участники, файлы, анкеты)
+- Анкеты загружаются из модуля `imena.tasks.questionnaire` (#vlikhobabin@gmail.com)
+
+---
+
+### TaskQuestionnaireHandler - Анкеты задач
+
+**Файл:** `/local/modules/imena.camunda/lib/Rest/TaskQuestionnaireHandler.php`
+**Назначение:** Добавление и получение анкет для задач. Используется Camunda для добавления анкет из шаблона в созданную задачу.
+
+#### Метод: `imena.camunda.task.questionnaire.add`
+
+**Описание:** Добавляет анкеты в задачу из JSON, полученного через `TaskTemplateHandler`. Позволяет создать анкеты с полной структурой (вопросы, варианты ответов, CODE поля для Camunda).
+
+**Параметры запроса:**
+- `taskId` (обязательный) - ID задачи
+- `questionnaires` (обязательный) - массив анкет в формате из `TaskTemplateHandler.questionnaires.items`
+
+**Пример вызова:**
+```bash
+curl -X POST "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.task.questionnaire.add" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "taskId": 123,
+    "questionnaires": [
+      {
+        "CODE": "it_equipment",
+        "TITLE": "Техника",
+        "SORT": 100,
+        "questions": [
+          {
+            "CODE": "need_laptop",
+            "TEXT": "Нужен ноутбук?",
+            "TYPE": "radio",
+            "IS_REQUIRED": "Y",
+            "options": [
+              {"CODE": "yes", "TEXT": "Да"},
+              {"CODE": "no", "TEXT": "Нет"}
+            ]
+          }
+        ]
+      }
+    ]
+  }'
+```
+
+**Пример ответа:**
+```json
+{
+  "result": {
+    "success": true,
+    "data": {
+      "taskId": 123,
+      "createdIds": [48, 49],
+      "totalCreated": 2
+    }
+  }
+}
+```
+
+**Структура ответа (add):**
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `taskId` | int | ID задачи |
+| `createdIds` | array | Массив ID созданных анкет |
+| `totalCreated` | int | Количество созданных анкет |
+
+#### Метод: `imena.camunda.task.questionnaire.list`
+
+**Описание:** Возвращает список анкет задачи с полной структурой.
+
+**Параметры запроса:**
+- `taskId` (обязательный) - ID задачи
+
+**Пример вызова:**
+```bash
+curl "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.task.questionnaire.list?taskId=123"
+```
+
+**Пример ответа:**
+```json
+{
+  "result": {
+    "success": true,
+    "data": {
+      "taskId": 123,
+      "items": [
+        {
+          "ID": 48,
+          "TASK_ID": 123,
+          "CODE": "it_equipment",
+          "TITLE": "Техника",
+          "SORT": 100,
+          "questions": [
+            {
+              "ID": 1,
+              "CODE": "need_laptop",
+              "TEXT": "Нужен ноутбук?",
+              "TYPE": "radio",
+              "IS_REQUIRED": "Y",
+              "options": [
+                {"ID": 1, "CODE": "yes", "TEXT": "Да", "isSelected": false},
+                {"ID": 2, "CODE": "no", "TEXT": "Нет", "isSelected": false}
+              ],
+              "hasAnswer": false
+            }
+          ]
+        }
+      ],
+      "total": 1,
+      "has_codes": true
+    }
+  }
+}
+```
+
+**Структура ответа (list):**
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `taskId` | int | ID задачи |
+| `items` | array | Массив анкет с полной структурой |
+| `total` | int | Количество анкет |
+| `has_codes` | bool | Наличие CODE полей для интеграции с Camunda |
+
+**Интеграция с Camunda:**
+
+Типичный сценарий использования:
+
+1. Camunda создаёт задачу через стандартный REST API Bitrix24
+2. Camunda вызывает `imena.camunda.tasktemplate.get` для получения шаблона с анкетами
+3. Camunda вызывает `imena.camunda.task.questionnaire.add` для добавления анкет в созданную задачу
+
+```javascript
+// Пример в Service Task Camunda
+// 1. Получаем шаблон с анкетами
+const templateResponse = await fetch(
+  `${BITRIX_REST_URL}/imena.camunda.tasktemplate.get?` +
+  `camundaProcessId=${processId}&elementId=${elementId}`
+);
+const template = await templateResponse.json();
+
+// 2. Создаём задачу через стандартный API (tasks.task.add)
+const taskResponse = await fetch(`${BITRIX_REST_URL}/tasks.task.add`, {
+  method: 'POST',
+  body: JSON.stringify({ fields: { ... } })
+});
+const task = await taskResponse.json();
+
+// 3. Добавляем анкеты из шаблона в задачу
+if (template.result.data.questionnaires.total > 0) {
+  await fetch(`${BITRIX_REST_URL}/imena.camunda.task.questionnaire.add`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      taskId: task.result.task.id,
+      questionnaires: template.result.data.questionnaires.items
+    })
+  });
+}
+```
+
+**Особенности:**
+- Поддерживает CODE поля для интеграции с Camunda
+- Сохраняет полную структуру анкет (вопросы, варианты ответов)
+- Валидирует существование задачи перед добавлением
+- Использует сервис `QuestionnaireService` из модуля `imena.tasks.questionnaire` (#vlikhobabin@gmail.com)
 
 ---
 
@@ -1390,6 +1676,8 @@ error_log("YourHandler: Processing request with ID={$id}");
 | `imena.camunda.userfield.exists` | [UserFieldsHandler](#userfieldshandler---пользовательские-поля-задач) | Проверка существования поля |
 | `imena.camunda.user.supervisor.get` | [UserSupervisorHandler](#usersupervisorhandler---руководители-пользователей) | Получение руководителя пользователя |
 | `imena.camunda.tasktemplate.get` | [TaskTemplateHandler](#tasktemplatehandler---шаблоны-задач) | Получение шаблона задачи |
+| `imena.camunda.task.questionnaire.add` | [TaskQuestionnaireHandler](#taskquestionnairehandler---анкеты-задач) | Добавление анкет в задачу |
+| `imena.camunda.task.questionnaire.list` | [TaskQuestionnaireHandler](#taskquestionnairehandler---анкеты-задач) | Получение списка анкет задачи |
 | `imena.camunda.task.dependency.add` | [TaskDependencyHandler](#taskdependencyhandler---зависимости-задач) | Создание зависимости (Gantt) |
 
 ### Структура файлов:
@@ -1402,15 +1690,22 @@ error_log("YourHandler: Processing request with ID={$id}");
 ├── UserFieldsHandler.php              # Пользовательские поля задач
 ├── UserSupervisorHandler.php          # Руководители пользователей
 ├── TaskTemplateHandler.php            # Шаблоны задач
+├── TaskQuestionnaireHandler.php       # Анкеты задач
 ├── TaskDependencyHandler.php          # Зависимости задач (Gantt)
 └── README.md                          # Эта документация
 ```
 
 ---
 
-**Автор:** vlikhobabin@gmail.com  
-**Дата:** 2025-01-27  
-**Версия:** 2.0
+**Автор:** vlikhobabin@gmail.com
+**Дата:** 2025-12-08
+**Версия:** 2.1
+
+**Изменения в версии 2.1:**
+- Добавлен новый обработчик `TaskQuestionnaireHandler` для работы с анкетами задач
+- Методы `imena.camunda.task.questionnaire.add` и `imena.camunda.task.questionnaire.list`
+- Поддержка CODE полей для интеграции с Camunda process variables
+- Скрипты регистрации и тестирования handler'а
 
 **Изменения в версии 2.0:**
 - ✅ Добавлен новый обработчик `DiagramResponsibleHandler` (`imena.camunda.diagram.responsible.list`)
