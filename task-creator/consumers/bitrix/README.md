@@ -178,10 +178,31 @@ BITRIX_MAX_DESCRIPTION_LENGTH=10000
 
 ### Анкеты задач (questionnaires)
 
-- Если шаблон задачи Bitrix содержит секцию `questionnaires.items`, обработчик сохраняет её и после успешного `tasks.task.add` вызывает `imena.camunda.task.questionnaire.add` с этим списком.
-- Поддерживаются три сценария ответа `imena.camunda.tasktemplate.get`: есть анкеты, пустой список, или секция отсутствует (prod без фичи) — создание задач остаётся совместимым.
-- Формат анкет соответствует описанию в `BITRIX-ADDON-REST-API-v.2.md` (`CODE`, вопросы, варианты ответов, `has_codes`).
-- При ошибке добавления анкет задача остаётся созданной; в логах появится предупреждение.
+- Если шаблон задачи Bitrix содержит секцию `questionnaires.items`, обработчик сохраняет её и после успешного `tasks.task.add` вызывает `imena.camunda.task.questionnaire.add` с этим же списком (v2.3 — без преобразований).
+- Поддерживаются три сценария ответа `imena.camunda.tasktemplate.get`: есть анкеты, пустой список, или секция отсутствует — создание задач остаётся совместимым.
+- Формат анкет соответствует `BITRIX-ADDON-REST-API-v.2.3.md`: обязательный `CODE` у анкеты и вопросов, типы `string|integer|boolean|date|enum|user`, `ENUM_OPTIONS` для `enum`, поля `total` и `has_codes` в корне `questionnaires`.
+- При ошибке добавления анкет задача остаётся созданной; в логах появится предупреждение и тело ответа Bitrix24.
+
+Пример рабочего ответа `imena.camunda.tasktemplate.get` (сокращённо):
+```
+"questionnaires": {
+  "items": [
+    {
+      "CODE": "PERSONAL",
+      "TITLE": "Личные данные",
+      "questions": [
+        {"CODE": "TESTOVYY", "TYPE": "string", "IS_REQUIRED": "Y"},
+        {"CODE": "NUZHEN_NOUT", "TYPE": "boolean", "IS_REQUIRED": "Y"},
+        {"CODE": "TEST_VYBOR_IZ_SPISKA", "TYPE": "enum", "ENUM_OPTIONS": ["Вариант 1","Вариант 2"]},
+        {"CODE": "DATA_VYHODA", "TYPE": "date"},
+        {"CODE": "RUKOVODITEL", "TYPE": "user"}
+      ]
+    }
+  ],
+  "total": 1,
+  "has_codes": true
+}
+```
 
 ## Обязательный результат задачи (SE_PARAMETER)
 

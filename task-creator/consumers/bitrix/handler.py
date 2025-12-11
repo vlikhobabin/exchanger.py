@@ -2085,6 +2085,14 @@ class BitrixTaskHandler:
             logger.debug("Секция questionnaires имеет некорректный формат (ожидался dict)")
             return []
         
+        # Логируем вспомогательные поля v2.3 (total, has_codes), если они присутствуют
+        total = questionnaires_section.get('total')
+        has_codes = questionnaires_section.get('has_codes')
+        if isinstance(total, int):
+            logger.debug(f"questionnaires.total из шаблона: {total}")
+        if isinstance(has_codes, bool):
+            logger.debug(f"questionnaires.has_codes: {has_codes}")
+        
         items = questionnaires_section.get('items')
         if not items:
             logger.debug("Секция questionnaires отсутствует или items пустой")
@@ -2093,6 +2101,20 @@ class BitrixTaskHandler:
         if not isinstance(items, list):
             logger.debug("questionnaires.items имеет некорректный формат (ожидался list)")
             return []
+        
+        # Лёгкая валидация: CODE у анкеты и вопросов — обязательный в v2.3, но не модифицируем данные
+        missing_questionnaire_codes = sum(1 for q in items if isinstance(q, dict) and not q.get('CODE'))
+        missing_question_codes = 0
+        for q in items:
+            if not isinstance(q, dict):
+                continue
+            questions = q.get('questions') or []
+            if isinstance(questions, list):
+                missing_question_codes += sum(1 for question in questions if isinstance(question, dict) and not question.get('CODE'))
+        if missing_questionnaire_codes or missing_question_codes:
+            logger.warning(
+                f"Анкеты из шаблона содержат пустые CODE: анкеты={missing_questionnaire_codes}, вопросы={missing_question_codes}"
+            )
         
         self.stats["questionnaires_found"] += len(items)
         logger.debug(f"Извлечено {len(items)} анкет из шаблона")
@@ -2107,6 +2129,18 @@ class BitrixTaskHandler:
             return True
         
         api_url = f"{self.config.webhook_url.rstrip('/')}/imena.camunda.task.questionnaire.add"
+        
+        # Краткий лог: сколько анкет и их коды (если есть)
+        sample_codes = []
+        for q in questionnaires:
+            if isinstance(q, dict) and 'CODE' in q:
+                sample_codes.append(q.get('CODE'))
+                if len(sample_codes) >= 5:
+                    break
+        logger.debug(
+            f"Подготовка к добавлению анкет в задачу {task_id}: всего={len(questionnaires)}, пример CODE={sample_codes}"
+        )
+        
         payload = {
             "taskId": task_id,
             "questionnaires": questionnaires
@@ -2145,6 +2179,11 @@ class BitrixTaskHandler:
         except requests.exceptions.RequestException as e:
             self.stats["questionnaires_failed"] += 1
             logger.error(f"Ошибка запроса при добавлении анкет к задаче {task_id}: {e}")
+            try:
+                if getattr(e, "response", None) is not None and e.response is not None:
+                    logger.error(f"Тело ответа Bitrix24 при ошибке анкет: {e.response.text}")
+            except Exception:
+                pass
             return False
         except json.JSONDecodeError as e:
             self.stats["questionnaires_failed"] += 1

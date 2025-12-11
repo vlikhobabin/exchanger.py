@@ -858,7 +858,7 @@ curl "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.user.supervis
 curl "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.tasktemplate.get?camundaProcessId=Process_syi17nb19&elementId=Activity_0tqmi90"
 ```
 
-**Пример ответа:**
+**Пример ответа (v2.0):**
 ```json
 {
   "result": {
@@ -891,21 +891,64 @@ curl "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.tasktemplate.
           {
             "ID": 2,
             "TEMPLATE_ID": 3348,
-            "CODE": "it",
-            "TITLE": "Техника",
+            "CODE": "onboarding",
+            "TITLE": "Данные для оформления",
             "SORT": 100,
             "questions": [
               {
-                "ID": 2,
-                "QUESTIONNAIRE_TEMPLATE_ID": 2,
-                "CODE": "note",
-                "TEXT": "Нужен ноут?",
-                "TYPE": "radio",
+                "ID": 1,
+                "CODE": "FULL_NAME",
+                "NAME": "ФИО сотрудника",
+                "TYPE": "string",
                 "IS_REQUIRED": "Y",
-                "options": [
-                  {"ID": 3, "CODE": "yes", "TEXT": "Да", "SORT": 100},
-                  {"ID": 4, "CODE": "no", "TEXT": "Нет", "SORT": 200}
-                ]
+                "SORT": 100,
+                "DESCRIPTION": "Укажите полное ФИО",
+                "DEFAULT_VALUE": null,
+                "ENUM_OPTIONS": []
+              },
+              {
+                "ID": 2,
+                "CODE": "LAPTOP_NEEDED",
+                "NAME": "Нужен ли ноутбук?",
+                "TYPE": "boolean",
+                "IS_REQUIRED": "Y",
+                "SORT": 200,
+                "DESCRIPTION": null,
+                "DEFAULT_VALUE": null,
+                "ENUM_OPTIONS": []
+              },
+              {
+                "ID": 3,
+                "CODE": "COMPANY",
+                "NAME": "Организация",
+                "TYPE": "enum",
+                "IS_REQUIRED": "Y",
+                "SORT": 300,
+                "DESCRIPTION": "Выберите организацию",
+                "DEFAULT_VALUE": null,
+                "ENUM_OPTIONS": ["ИМЕНА, ООО", "ИМЕНА. УП, ООО"]
+              },
+              {
+                "ID": 4,
+                "CODE": "START_DATE",
+                "NAME": "Дата выхода на работу",
+                "TYPE": "date",
+                "IS_REQUIRED": "Y",
+                "SORT": 400,
+                "DESCRIPTION": null,
+                "DEFAULT_VALUE": null,
+                "ENUM_OPTIONS": []
+              },
+              {
+                "ID": 5,
+                "CODE": "SUPERVISOR",
+                "NAME": "Руководитель",
+                "TYPE": "user",
+                "IS_REQUIRED": "N",
+                "SORT": 500,
+                "DESCRIPTION": "Выберите непосредственного руководителя",
+                "DEFAULT_VALUE": null,
+                "ENUM_OPTIONS": []
               }
             ]
           }
@@ -932,10 +975,10 @@ curl "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.tasktemplate.
 | `tags` | array | Теги шаблона |
 | `checklists` | object | Чек-листы с древовидной структурой |
 | `files` | array | Прикрепленные файлы (Bitrix Disk) |
-| `questionnaires` | object | **Анкеты с CODE полями для Camunda интеграции** |
+| `questionnaires` | object | **Анкеты с CODE полями для Camunda интеграции (v2.0)** |
 | `meta` | object | Метаданные запроса |
 
-**Структура questionnaires (Анкеты):**
+**Структура questionnaires (Анкеты v2.0):**
 
 | Поле | Тип | Описание |
 |------|-----|----------|
@@ -954,47 +997,58 @@ curl "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.tasktemplate.
 | `SORT` | int | Сортировка |
 | `questions` | array | Массив вопросов |
 
-**Структура вопроса (questions[]):**
+**Структура вопроса (questions[]) - v2.0:**
 
 | Поле | Тип | Описание |
 |------|-----|----------|
 | `ID` | int | ID вопроса |
-| `CODE` | string\|null | Уникальный код вопроса для Camunda |
-| `TEXT` | string | Текст вопроса |
-| `TYPE` | string | Тип: `radio` (один ответ) или `checkbox` (несколько) |
+| `CODE` | string | **Обязательный** код вопроса (имя переменной Camunda) |
+| `NAME` | string | Текст вопроса |
+| `TYPE` | string | Тип значения (см. таблицу типов) |
 | `IS_REQUIRED` | string | Обязательность: `Y` или `N` |
-| `options` | array | Массив вариантов ответа |
-
-**Структура варианта ответа (options[]):**
-
-| Поле | Тип | Описание |
-|------|-----|----------|
-| `ID` | int | ID варианта |
-| `CODE` | string\|null | Уникальный код варианта для Camunda |
-| `TEXT` | string | Текст варианта |
 | `SORT` | int | Сортировка |
+| `DESCRIPTION` | string\|null | Подсказка для пользователя |
+| `DEFAULT_VALUE` | string\|null | Значение по умолчанию |
+| `ENUM_OPTIONS` | array | Варианты для типа `enum` |
 
-**Использование CODE полей в Camunda:**
+**Типы вопросов (v2.0):**
 
-CODE поля позволяют формировать переменные процесса Camunda в формате:
+| Тип | Описание | Пример значения |
+|-----|----------|-----------------|
+| `string` | Строка текста | `"Иванов Иван"` |
+| `integer` | Целое число | `"42"` |
+| `boolean` | Да/Нет | `"true"` / `"false"` |
+| `date` | Дата ISO | `"2025-12-11"` |
+| `enum` | Выбор из списка | `"ИМЕНА, ООО"` |
+| `user` | ID пользователя Bitrix24 | `"123"` |
+
+**Использование CODE полей в Camunda (v2.0):**
+
+CODE вопроса становится переменной процесса Camunda:
 ```
-{questionnaire_code}_{question_code} = {option_code}
+{question_code} = {value}
 ```
 
-Например, для анкеты с CODE=`it`, вопроса с CODE=`note` и выбранного варианта с CODE=`yes`:
+Примеры:
 ```
-it_note = yes
+FULL_NAME = "Иванов Иван Иванович"
+LAPTOP_NEEDED = true
+COMPANY = "ИМЕНА, ООО"
+START_DATE = "2025-12-15"
+SUPERVISOR = 123
 ```
 
 Это позволяет использовать результаты анкет в gateway-условиях BPMN:
 ```
-${it_note == 'yes'}
+${LAPTOP_NEEDED == true}
+${COMPANY == 'ИМЕНА, ООО'}
+${SUPERVISOR != null}
 ```
 
 **Особенности:**
 - Находит шаблон через JOIN: `b_imena_storm_diagrams` → `b_imena_storm_responsible` → `b_imena_tasks_templates`
 - Возвращает полную структуру шаблона (теги, чек-листы, участники, файлы, анкеты)
-- Анкеты загружаются из модуля `imena.tasks.questionnaire` (#vlikhobabin@gmail.com)
+- Анкеты загружаются из модуля `imena.tasks.questionnaire` v2.0 (#vlikhobabin@gmail.com)
 
 ---
 
@@ -1005,13 +1059,13 @@ ${it_note == 'yes'}
 
 #### Метод: `imena.camunda.task.questionnaire.add`
 
-**Описание:** Добавляет анкеты в задачу из JSON, полученного через `TaskTemplateHandler`. Позволяет создать анкеты с полной структурой (вопросы, варианты ответов, CODE поля для Camunda).
+**Описание (v2.0):** Добавляет анкеты в задачу из JSON, полученного через `TaskTemplateHandler`. Позволяет создать анкеты с типизированными вопросами (string, integer, boolean, date, enum, user).
 
 **Параметры запроса:**
 - `taskId` (обязательный) - ID задачи
 - `questionnaires` (обязательный) - массив анкет в формате из `TaskTemplateHandler.questionnaires.items`
 
-**Пример вызова:**
+**Пример вызова (v2.0):**
 ```bash
 curl -X POST "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.task.questionnaire.add" \
   -H "Content-Type: application/json" \
@@ -1019,19 +1073,46 @@ curl -X POST "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.task.
     "taskId": 123,
     "questionnaires": [
       {
-        "CODE": "it_equipment",
-        "TITLE": "Техника",
+        "CODE": "onboarding",
+        "TITLE": "Данные для оформления",
         "SORT": 100,
         "questions": [
           {
-            "CODE": "need_laptop",
-            "TEXT": "Нужен ноутбук?",
-            "TYPE": "radio",
+            "CODE": "FULL_NAME",
+            "NAME": "ФИО сотрудника",
+            "TYPE": "string",
             "IS_REQUIRED": "Y",
-            "options": [
-              {"CODE": "yes", "TEXT": "Да"},
-              {"CODE": "no", "TEXT": "Нет"}
-            ]
+            "SORT": 100,
+            "DESCRIPTION": "Укажите полное ФИО"
+          },
+          {
+            "CODE": "LAPTOP_NEEDED",
+            "NAME": "Нужен ли ноутбук?",
+            "TYPE": "boolean",
+            "IS_REQUIRED": "Y",
+            "SORT": 200
+          },
+          {
+            "CODE": "COMPANY",
+            "NAME": "Организация",
+            "TYPE": "enum",
+            "IS_REQUIRED": "Y",
+            "SORT": 300,
+            "ENUM_OPTIONS": ["ИМЕНА, ООО", "ИМЕНА. УП, ООО"]
+          },
+          {
+            "CODE": "START_DATE",
+            "NAME": "Дата выхода на работу",
+            "TYPE": "date",
+            "IS_REQUIRED": "Y",
+            "SORT": 400
+          },
+          {
+            "CODE": "SUPERVISOR",
+            "NAME": "Руководитель",
+            "TYPE": "user",
+            "IS_REQUIRED": "N",
+            "SORT": 500
           }
         ]
       }
@@ -1046,8 +1127,8 @@ curl -X POST "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.task.
     "success": true,
     "data": {
       "taskId": 123,
-      "createdIds": [48, 49],
-      "totalCreated": 2
+      "createdIds": [48],
+      "totalCreated": 1
     }
   }
 }
@@ -1063,7 +1144,7 @@ curl -X POST "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.task.
 
 #### Метод: `imena.camunda.task.questionnaire.list`
 
-**Описание:** Возвращает список анкет задачи с полной структурой.
+**Описание (v2.0):** Возвращает список анкет задачи с типизированными вопросами и текущими ответами.
 
 **Параметры запроса:**
 - `taskId` (обязательный) - ID задачи
@@ -1073,7 +1154,7 @@ curl -X POST "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.task.
 curl "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.task.questionnaire.list?taskId=123"
 ```
 
-**Пример ответа:**
+**Пример ответа (v2.0):**
 ```json
 {
   "result": {
@@ -1084,21 +1165,70 @@ curl "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.task.question
         {
           "ID": 48,
           "TASK_ID": 123,
-          "CODE": "it_equipment",
-          "TITLE": "Техника",
+          "CODE": "onboarding",
+          "TITLE": "Данные для оформления",
           "SORT": 100,
           "questions": [
             {
               "ID": 1,
-              "CODE": "need_laptop",
-              "TEXT": "Нужен ноутбук?",
-              "TYPE": "radio",
+              "CODE": "FULL_NAME",
+              "NAME": "ФИО сотрудника",
+              "TYPE": "string",
               "IS_REQUIRED": "Y",
-              "options": [
-                {"ID": 1, "CODE": "yes", "TEXT": "Да", "isSelected": false},
-                {"ID": 2, "CODE": "no", "TEXT": "Нет", "isSelected": false}
-              ],
-              "hasAnswer": false
+              "SORT": 100,
+              "DESCRIPTION": "Укажите полное ФИО",
+              "DEFAULT_VALUE": null,
+              "ENUM_OPTIONS": [],
+              "answer": "Иванов Иван Иванович"
+            },
+            {
+              "ID": 2,
+              "CODE": "LAPTOP_NEEDED",
+              "NAME": "Нужен ли ноутбук?",
+              "TYPE": "boolean",
+              "IS_REQUIRED": "Y",
+              "SORT": 200,
+              "DESCRIPTION": null,
+              "DEFAULT_VALUE": null,
+              "ENUM_OPTIONS": [],
+              "answer": "true"
+            },
+            {
+              "ID": 3,
+              "CODE": "COMPANY",
+              "NAME": "Организация",
+              "TYPE": "enum",
+              "IS_REQUIRED": "Y",
+              "SORT": 300,
+              "DESCRIPTION": "Выберите организацию",
+              "DEFAULT_VALUE": null,
+              "ENUM_OPTIONS": ["ИМЕНА, ООО", "ИМЕНА. УП, ООО"],
+              "answer": "ИМЕНА, ООО"
+            },
+            {
+              "ID": 4,
+              "CODE": "START_DATE",
+              "NAME": "Дата выхода на работу",
+              "TYPE": "date",
+              "IS_REQUIRED": "Y",
+              "SORT": 400,
+              "DESCRIPTION": null,
+              "DEFAULT_VALUE": null,
+              "ENUM_OPTIONS": [],
+              "answer": "2025-12-15"
+            },
+            {
+              "ID": 5,
+              "CODE": "SUPERVISOR",
+              "NAME": "Руководитель",
+              "TYPE": "user",
+              "IS_REQUIRED": "N",
+              "SORT": 500,
+              "DESCRIPTION": "Выберите непосредственного руководителя",
+              "DEFAULT_VALUE": null,
+              "ENUM_OPTIONS": [],
+              "answer": "123",
+              "_userName": "Петров Пётр"
             }
           ]
         }
@@ -1119,7 +1249,7 @@ curl "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.task.question
 | `total` | int | Количество анкет |
 | `has_codes` | bool | Наличие CODE полей для интеграции с Camunda |
 
-**Интеграция с Camunda:**
+**Интеграция с Camunda (v2.0):**
 
 Типичный сценарий использования:
 
@@ -1129,7 +1259,7 @@ curl "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.task.question
 
 ```javascript
 // Пример в Service Task Camunda
-// 1. Получаем шаблон с анкетами
+// 1. Получаем шаблон с типизированными анкетами
 const templateResponse = await fetch(
   `${BITRIX_REST_URL}/imena.camunda.tasktemplate.get?` +
   `camundaProcessId=${processId}&elementId=${elementId}`
@@ -1143,24 +1273,52 @@ const taskResponse = await fetch(`${BITRIX_REST_URL}/tasks.task.add`, {
 });
 const task = await taskResponse.json();
 
-// 3. Добавляем анкеты из шаблона в задачу
+// 3. Добавляем анкеты из шаблона в задачу (v2.0 - без преобразований!)
 if (template.result.data.questionnaires.total > 0) {
   await fetch(`${BITRIX_REST_URL}/imena.camunda.task.questionnaire.add`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       taskId: task.result.task.id,
-      questionnaires: template.result.data.questionnaires.items
+      questionnaires: template.result.data.questionnaires.items  // Передаём как есть!
     })
   });
 }
+
+// 4. Позже: получаем заполненные ответы для использования в условиях
+const answersResponse = await fetch(
+  `${BITRIX_REST_URL}/imena.camunda.task.questionnaire.list?taskId=${taskId}`
+);
+const answers = await answersResponse.json();
+
+// Формируем переменные Camunda из ответов
+const processVariables = {};
+answers.result.data.items.forEach(questionnaire => {
+  questionnaire.questions.forEach(question => {
+    if (question.answer !== null) {
+      // Тип boolean → приводим к boolean
+      if (question.TYPE === 'boolean') {
+        processVariables[question.CODE] = question.answer === 'true';
+      }
+      // Тип integer → приводим к number
+      else if (question.TYPE === 'integer') {
+        processVariables[question.CODE] = parseInt(question.answer);
+      }
+      // Остальные типы → строка
+      else {
+        processVariables[question.CODE] = question.answer;
+      }
+    }
+  });
+});
 ```
 
-**Особенности:**
-- Поддерживает CODE поля для интеграции с Camunda
-- Сохраняет полную структуру анкет (вопросы, варианты ответов)
+**Особенности (v2.0):**
+- Поддерживает 6 типов вопросов: string, integer, boolean, date, enum, user
+- CODE вопроса обязателен и становится переменной Camunda
+- JSON из `tasktemplate.get` можно напрямую передавать в `task.questionnaire.add`
 - Валидирует существование задачи перед добавлением
-- Использует сервис `QuestionnaireService` из модуля `imena.tasks.questionnaire` (#vlikhobabin@gmail.com)
+- Использует сервис `QuestionnaireService` v2.0 из модуля `imena.tasks.questionnaire` (#vlikhobabin@gmail.com)
 
 ---
 
@@ -1347,6 +1505,113 @@ fi
 ---
 
 ## Тестирование
+
+### Готовые тестовые скрипты
+
+Модуль содержит набор готовых тестовых скриптов для проверки работы REST API handlers. Все скрипты находятся в директории `/local/modules/imena.camunda/lib/Rest/`.
+
+#### Список тестов:
+
+| Файл | Описание | Запуск |
+|------|----------|--------|
+| `test_tasktemplate_handler.php` | Тест TaskTemplateHandler v2.0 (шаблоны с анкетами) | Браузер (требует админ-права) |
+| `test_taskquestionnaire_handler_cli.php` | Тест TaskQuestionnaireHandler v2.0 (анкеты задач) | CLI |
+| `test_diagram_properties_handler.php` | Тест DiagramPropertiesHandler (параметры диаграмм) | CLI |
+| `test_diagram_responsible_handler.php` | Тест DiagramResponsibleHandler (ответственные) | CLI |
+| `test_task_dependency_handler.php` | Тест TaskDependencyHandler (зависимости Gantt) | CLI |
+
+#### Запуск CLI тестов:
+
+```bash
+# Тест анкет задач (v2.0 - типизированные вопросы)
+php /home/bitrix/www/local/modules/imena.camunda/lib/Rest/test_taskquestionnaire_handler_cli.php
+
+# Тест параметров диаграмм
+php /home/bitrix/www/local/modules/imena.camunda/lib/Rest/test_diagram_properties_handler.php
+
+# Тест ответственных диаграмм
+php /home/bitrix/www/local/modules/imena.camunda/lib/Rest/test_diagram_responsible_handler.php
+
+# Тест зависимостей задач (Gantt)
+php /home/bitrix/www/local/modules/imena.camunda/lib/Rest/test_task_dependency_handler.php
+```
+
+#### Запуск web-теста:
+
+```
+https://bx-dev.eg-holding.ru/local/modules/imena.camunda/lib/Rest/test_tasktemplate_handler.php
+```
+
+> **Примечание:** Web-тест требует авторизации с правами администратора.
+
+#### Что проверяют тесты:
+
+**test_taskquestionnaire_handler_cli.php (v2.0):**
+- ✅ Регистрация handler в системе
+- ✅ Наличие класса и методов
+- ✅ Добавление анкет с типизированными вопросами (6 типов: string, integer, boolean, date, enum, user)
+- ✅ Получение списка анкет с проверкой типов
+- ✅ Проверка данных в БД (статистика типов)
+- ✅ Очистка тестовых данных
+- ✅ Валидация параметров (taskId, questionnaires, несуществующая задача)
+
+**test_tasktemplate_handler.php (v2.0):**
+- ✅ Регистрация handler в системе
+- ✅ Наличие класса и методов
+- ✅ Поиск тестовых данных (диаграмма → элемент → шаблон)
+- ✅ Вызов getAction с валидными данными
+- ✅ Обработка несуществующих данных
+- ✅ Валидация обязательных параметров
+- ✅ Проверка структуры анкет v2.0 (типы вопросов, ENUM_OPTIONS)
+
+#### Пример вывода теста TaskQuestionnaireHandler v2.0:
+
+```
+========================================
+TaskQuestionnaireHandler v2.0 - Тест
+========================================
+
+Тест 1: Проверка регистрации handler
+----------------------------------------
+✓ Handler зарегистрирован
+
+Тест 2: Проверка класса и методов
+----------------------------------------
+✓ Класс TaskQuestionnaireHandler найден
+  ✓ Метод: imena.camunda.task.questionnaire.add
+  ✓ Метод: imena.camunda.task.questionnaire.list
+
+Тест 4: Добавление анкет v2.0 (addAction)
+----------------------------------------
+✓ Анкеты v2.0 успешно добавлены
+  taskId: 475
+  totalCreated: 2
+  createdIds: 55, 56
+
+Тест 6: Проверка данных в БД (v2.0)
+----------------------------------------
+✓ Найдено анкет в БД: 2
+
+Статистика типов:
+  string: 2
+  integer: 1
+  boolean: 2
+  date: 1
+  enum: 1
+  user: 1
+
+Тест 8: Валидация параметров
+----------------------------------------
+✓ Корректно обрабатывает отсутствие taskId
+✓ Корректно обрабатывает отсутствие questionnaires
+✓ Корректно обрабатывает несуществующую задачу
+
+========================================
+Тесты v2.0 завершены
+========================================
+```
+
+---
 
 ### 1. Проверка через браузер
 
@@ -1698,8 +1963,23 @@ error_log("YourHandler: Processing request with ID={$id}");
 ---
 
 **Автор:** vlikhobabin@gmail.com
-**Дата:** 2025-12-08
-**Версия:** 2.1
+**Дата:** 2025-12-11
+**Версия:** 2.3
+
+**Изменения в версии 2.3:**
+- ✅ Добавлен раздел "Готовые тестовые скрипты" с описанием всех тестов
+- ✅ Обновлён `test_taskquestionnaire_handler_cli.php` для v2.0 (типизированные вопросы)
+- ✅ Обновлён `test_tasktemplate_handler.php` для v2.0 (проверка структуры анкет)
+- ✅ Удалён устаревший `test_questionnaires_cli.php` (дублировал функционал)
+- ✅ Добавлены примеры вывода тестов и команды запуска
+
+**Изменения в версии 2.2:**
+- ✅ Обновлены `TaskTemplateHandler` и `TaskQuestionnaireHandler` под v2.0 анкет
+- ✅ Типизированные вопросы: string, integer, boolean, date, enum, user
+- ✅ Удалены `options` (варианты ответов) — теперь `ENUM_OPTIONS` в вопросе
+- ✅ Обновлена документация с примерами v2.0
+- ✅ Добавлены примеры интеграции Camunda с типизированными анкетами
+- ✅ JSON из `tasktemplate.get` можно напрямую передавать в `task.questionnaire.add`
 
 **Изменения в версии 2.1:**
 - Добавлен новый обработчик `TaskQuestionnaireHandler` для работы с анкетами задач
