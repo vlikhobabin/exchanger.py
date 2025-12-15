@@ -330,10 +330,11 @@ class BitrixTaskTracker:
             Optional[Dict[str, Any]]: Информация о задаче или None при ошибке
             
         Запрашиваемые поля:
-            - *: Все стандартные поля задачи
-            - UF_RESULT_EXPECTED: Пользовательское поле "Ожидаемый результат"
-            - UF_RESULT_QUESTION: Пользовательское поле "Вопрос"
-            - UF_RESULT_ANSWER: Пользовательское поле "Ответ"
+            - ID: ID задачи
+            - TITLE: Заголовок задачи
+            - STATUS: Статус задачи
+            - UF_RESULT_EXPECTED: Пользовательское поле "Ожидаемый результат" (нужен для логики Camunda)
+            - UF_RESULT_ANSWER: Пользовательское поле "Ответ" (нужен для резолвинга ufResultAnswer_text)
             
         Обработка ошибок:
             - Логирует ошибки сетевых запросов
@@ -341,8 +342,9 @@ class BitrixTaskTracker:
             - Использует таймаут из конфигурации
         """
         try:
-            # Настраиваем поля для запроса (включая пользовательские поля)
-            select_fields = ['*', 'UF_RESULT_EXPECTED', 'UF_RESULT_QUESTION', 'UF_RESULT_ANSWER']
+            # Запрашиваем ТОЛЬКО минимально необходимые поля.
+            # Это уменьшает payload в camunda.responses.queue и нагрузку на Bitrix24.
+            select_fields = ['ID', 'TITLE', 'STATUS', 'UF_RESULT_EXPECTED', 'UF_RESULT_ANSWER']
             params = {'taskId': task_id, 'select[]': select_fields}
             
             # Выполняем запрос к Bitrix24 API
@@ -355,6 +357,48 @@ class BitrixTaskTracker:
         except requests.exceptions.RequestException as e:
             logger.error(f"Ошибка запроса к Bitrix24 для задачи {task_id}: {e}")
             return None
+
+    def _build_minimal_task_payload(self, task_info: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Формирует минимальный набор полей задачи для отправки в camunda.responses.queue.
+
+        camunda-worker реально использует:
+        - id/title/status -> для переменных bitrix_task_id/bitrix_task_title/bitrix_task_status
+        - ufResultExpected -> чтобы понять, требуется ли ответ
+        - ufResultAnswer_text -> для установки переменной activity_id ("ok"/"no")
+        """
+        def pick(*keys: str) -> Optional[Any]:
+            for k in keys:
+                if k in task_info and task_info.get(k) is not None:
+                    return task_info.get(k)
+            return None
+
+        minimal: Dict[str, Any] = {}
+
+        # Базовые поля (поддерживаем оба регистра/стиля ключей)
+        task_id = pick("id", "ID")
+        if task_id is not None:
+            minimal["id"] = str(task_id)
+
+        title = pick("title", "TITLE")
+        if title is not None:
+            minimal["title"] = str(title)
+
+        status = pick("status", "STATUS")
+        if status is not None:
+            minimal["status"] = str(status)
+
+        # Пользовательские поля (Bitrix часто возвращает UF_* в camelCase)
+        uf_expected = pick("ufResultExpected", "UF_RESULT_EXPECTED")
+        if uf_expected is not None:
+            minimal["ufResultExpected"] = str(uf_expected)
+
+        # Важно: текстовая версия ответа добавляется tracker'ом после резолвинга
+        uf_answer_text = pick("ufResultAnswer_text")
+        if uf_answer_text is not None:
+            minimal["ufResultAnswer_text"] = str(uf_answer_text)
+
+        return minimal
 
     def _update_response_data(self, message_data: Dict[str, Any], task_info: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -378,7 +422,13 @@ class BitrixTaskTracker:
             - Если маппинг не найден - использует исходный ID
         """
         # Упрощенная логика резолвинга пользовательского поля
-        answer_id = task_info.get('ufResultAnswer')
+        # Bitrix может вернуть UF_* как camelCase (ufResultAnswer) или UPPER_CASE (UF_RESULT_ANSWER).
+        answer_id = task_info.get('ufResultAnswer') or task_info.get('UF_RESULT_ANSWER')
+
+        # На случай если поле MULTIPLE или API вернул список значений
+        if isinstance(answer_id, (list, tuple)):
+            answer_id = answer_id[0] if answer_id else None
+
         if answer_id:
             # Проверяем наличие маппинга
             if not self.config.uf_result_answer_mapping:
@@ -394,8 +444,10 @@ class BitrixTaskTracker:
             else:
                 logger.debug(f"UF_RESULT_ANSWER не найден в маппинге, используется ID: {answer_id}")
 
-        # Обновляем данные сообщения с актуальной информацией о задаче
-        message_data['response_data'] = {'result': {'task': task_info}}
+        # Обновляем данные сообщения минимально необходимой информацией о задаче.
+        # Не передаем весь task_info целиком — camunda-worker использует только небольшой набор полей.
+        minimal_task = self._build_minimal_task_payload(task_info)
+        message_data['response_data'] = {'result': {'task': minimal_task}}
         message_data['processed_at'] = time.time()
         message_data['processing_status'] = 'completed_by_tracker'
         return message_data

@@ -578,6 +578,21 @@ class UniversalCamundaWorker:
             logger.error(f"Ошибка конвертации ufResultAnswer_text '{uf_result_answer_text}': {e}")
             return "no"
 
+    def _is_truthy_uf_result_expected(self, value: Any) -> bool:
+        """
+        UF_RESULT_EXPECTED в Bitrix24 может приходить в разных форматах:
+        - "1"/"0"
+        - "Y"/"N"
+        - True/False
+        - "true"/"false"
+        """
+        if value is None:
+            return False
+        if isinstance(value, bool):
+            return value
+        v = str(value).strip().lower()
+        return v in {"1", "y", "yes", "true", "да"}
+
     def _process_response_message(self, message_data: Dict[str, Any]) -> Tuple[bool, Optional[Dict[str, Any]]]:
         """
         Обработка ответного сообщения и завершение задачи в Camunda
@@ -645,8 +660,9 @@ class UniversalCamundaWorker:
                 # Поддерживаем оба формата: camelCase (ufResultExpected) и UPPER_CASE (UF_RESULT_EXPECTED)
                 uf_result_expected = task_data.get("ufResultExpected") or task_data.get("UF_RESULT_EXPECTED")
                 
-                # Задача требует ответа только если ufResultExpected равно "1" (Y в Bitrix24)
-                if uf_result_expected == "1":
+                # Создаем переменную activity_id ТОЛЬКО если задача требует ответа.
+                # Если ответ не требуется — переменная activity_id НЕ нужна Camunda и не должна появляться.
+                if self._is_truthy_uf_result_expected(uf_result_expected):
                     # Задача требует ответа от пользователя
                     uf_result_answer_text = task_data.get("ufResultAnswer_text")
                     
@@ -655,20 +671,22 @@ class UniversalCamundaWorker:
                         converted_value = self._convert_uf_result_answer(uf_result_answer_text)
                         
                         # Создаем переменную с именем activity_id
-                        variables[activity_id] = converted_value
+                        variables.setdefault(activity_id, converted_value)
                         
-                        logger.info(f"Создана переменная процесса: {activity_id} = '{converted_value}' (исходное: '{uf_result_answer_text}')")
+                        logger.debug(f"Создана переменная процесса: {activity_id} = '{converted_value}' (исходное: '{uf_result_answer_text}')")
                     else:
                         # Ответ требуется, но не найден - используем значение по умолчанию
                         # Это может произойти, если задача была завершена без ответа
-                        variables[activity_id] = "ok"
-                        logger.warning(f"Ответ требуется (ufResultExpected=1), но ufResultAnswer_text не найден для activity_id: {activity_id}. Устанавливаем значение по умолчанию 'ok'")
+                        # ВАЖНО: не затираем существующее значение переменной (если оно уже есть в процессе).
+                        # По умолчанию ставим 'no' (безопаснее для conditional flow, чем всегда 'ok').
+                        variables.setdefault(activity_id, "no")
+                        logger.debug(f"Ответ требуется (ufResultExpected truthy), но ufResultAnswer_text не найден для activity_id: {activity_id}. Устанавливаем значение по умолчанию 'no'")
                 else:
-                    # Задача не требует ответа от пользователя (ufResultExpected != "1")
-                    # ВАЖНО: Всегда устанавливаем переменную, даже если ответ не требуется
-                    # Это необходимо для работы conditional flow в BPMN (например, ${Activity_177u7c0 != "ok"})
-                    variables[activity_id] = "ok"
-                    logger.info(f"Задача {task_id} не требует ответа от пользователя (ufResultExpected: {uf_result_expected}), устанавливаем переменную {activity_id} = 'ok' по умолчанию")
+                    # Задача не требует ответа от пользователя — НЕ создаем переменную activity_id.
+                    logger.debug(
+                        f"Задача {task_id} не требует ответа от пользователя "
+                        f"(ufResultExpected: {uf_result_expected}); переменная {activity_id} не будет создана"
+                    )
             else:
                 logger.warning("Не найден activity_id в original_message")
             
