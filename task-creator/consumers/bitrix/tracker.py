@@ -57,6 +57,8 @@ class BitrixTaskTracker:
         """
         self.config = bitrix_config
         self.task_get_url = f"{self.config.webhook_url}/tasks.task.get.json"
+        # Кастомный метод модуля imena.camunda для получения анкет и ответов по задаче
+        self.task_questionnaire_list_url = f"{self.config.webhook_url.rstrip('/')}/imena.camunda.task.questionnaire.list"
         
         # Инициализация RabbitMQ компонентов
         self.consumer = RabbitMQConsumer()
@@ -269,8 +271,18 @@ class BitrixTaskTracker:
             if str(task_info.get('status')) in self.completed_statuses:
                 logger.info(f"Задача {task_id} завершена (статус: {task_info['status']}), перемещаем.")
                 
+                # Второй запрос: анкеты и ответы (кастомный REST метод)
+                questionnaires_payload = self._get_task_questionnaires_from_bitrix(task_id)
+                if questionnaires_payload is None:
+                    # Не блокируем обработку, но явно фиксируем отсутствие анкетных данных
+                    questionnaires_payload = {"taskId": str(task_id), "items": [], "total": 0, "has_codes": False}
+
                 # Обновляем данные сообщения с актуальной информацией о задаче
-                updated_message = self._update_response_data(message_info["message_data"], task_info)
+                updated_message = self._update_response_data(
+                    message_info["message_data"],
+                    task_info,
+                    questionnaires_payload=questionnaires_payload
+                )
                 
                 # КРИТИЧНО: ACK ПЕРЕД отправкой в responses.queue
                 # Это безопасно, т.к. responses.queue имеет durable=True
@@ -400,7 +412,12 @@ class BitrixTaskTracker:
 
         return minimal
 
-    def _update_response_data(self, message_data: Dict[str, Any], task_info: Dict[str, Any]) -> Dict[str, Any]:
+    def _update_response_data(
+        self,
+        message_data: Dict[str, Any],
+        task_info: Dict[str, Any],
+        questionnaires_payload: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         """
         Обновляет данные сообщения с актуальной информацией о задаче.
         
@@ -447,10 +464,72 @@ class BitrixTaskTracker:
         # Обновляем данные сообщения минимально необходимой информацией о задаче.
         # Не передаем весь task_info целиком — camunda-worker использует только небольшой набор полей.
         minimal_task = self._build_minimal_task_payload(task_info)
-        message_data['response_data'] = {'result': {'task': minimal_task}}
+        result_block: Dict[str, Any] = {'task': minimal_task}
+
+        # Анкеты: сохраняем сырой payload в сообщении (для преобразования в переменные Camunda на стороне camunda-worker).
+        # В Camunda сохраняются только плоские переменные, сам JSON в процесс не пишем.
+        if questionnaires_payload is not None:
+            result_block['questionnaires'] = questionnaires_payload
+
+            # DEBUG лог - только краткая сводка (без полного JSON)
+            try:
+                items = questionnaires_payload.get("items") if isinstance(questionnaires_payload, dict) else None
+                logger.debug(
+                    f"Получены анкеты по задаче: taskId={questionnaires_payload.get('taskId')}, "
+                    f"items={len(items) if isinstance(items, list) else 'n/a'}"
+                )
+            except Exception:
+                pass
+
+        message_data['response_data'] = {'result': result_block}
         message_data['processed_at'] = time.time()
         message_data['processing_status'] = 'completed_by_tracker'
         return message_data
+
+    def _get_task_questionnaires_from_bitrix(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Получает анкеты (questionnaires) и ответы по задаче через кастомный REST метод модуля imena.camunda.
+
+        Метод: imena.camunda.task.questionnaire.list?taskId={task_id}
+
+        Returns:
+            dict в формате result.data из API:
+              - taskId
+              - items: [ {ID, TASK_ID, CODE, TITLE, SORT, questions:[{CODE, TYPE, answer, ...}]} ]
+              - total
+              - has_codes
+            или None при ошибке запроса/ответа.
+        """
+        try:
+            params = {"taskId": task_id}
+            response = requests.get(
+                self.task_questionnaire_list_url,
+                params=params,
+                timeout=self.config.request_timeout
+            )
+            response.raise_for_status()
+            payload = response.json()
+
+            if 'error' in payload:
+                logger.error(f"Bitrix questionnaires API error for task {task_id}: {payload.get('error')}")
+                return None
+
+            data = payload.get("result", {}).get("data")
+            if not isinstance(data, dict):
+                logger.error(f"Bitrix questionnaires API malformed response for task {task_id}: no result.data")
+                return None
+
+            return data
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Ошибка запроса анкет Bitrix24 для задачи {task_id}: {e}")
+            return None
+        except json.JSONDecodeError as e:
+            logger.error(f"Ошибка декодирования JSON анкет Bitrix24 для задачи {task_id}: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Неожиданная ошибка при получении анкет Bitrix24 для задачи {task_id}: {e}")
+            return None
 
     def _move_to_responses_queue(self, message_data: Dict[str, Any]) -> bool:
         """

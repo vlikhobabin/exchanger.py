@@ -593,6 +593,90 @@ class UniversalCamundaWorker:
         v = str(value).strip().lower()
         return v in {"1", "y", "yes", "true", "да"}
 
+    def _convert_question_answer_for_camunda(self, q_type: Any, answer: Any) -> Any:
+        """
+        Преобразование answer из Bitrix questionnaires под типы переменных Camunda.
+        Требования:
+        - boolean/integer/string/date -> конвертируем в соответствующий тип
+        - user/enum/universal_list/прочее -> оставляем строкой
+        - answer == None -> вернуть None (Camunda Null)
+        """
+        if answer is None:
+            return None
+
+        q_type_str = (str(q_type).strip().lower() if q_type is not None else "")
+        # Bitrix v2.0: boolean answers are strings "true"/"false"
+        if q_type_str == "boolean":
+            v = str(answer).strip().lower()
+            return v in {"true", "1", "y", "yes", "да"}
+        if q_type_str == "integer":
+            try:
+                return int(str(answer).strip())
+            except Exception:
+                # По контракту: если тип указан явно, пытаемся привести.
+                # При неудаче — сохраняем как строку, но логируем.
+                logger.debug(f"Не удалось привести integer answer='{answer}' к int; сохраняем строкой")
+                return str(answer)
+        if q_type_str in {"string", "date"}:
+            return str(answer)
+
+        # Неявные типы: user/enum/universal_list и любые другие оставляем строкой
+        return str(answer)
+
+    def _apply_questionnaires_to_variables(self, message_data: Dict[str, Any], variables: Dict[str, Any]):
+        """
+        Разворачивает анкеты из response_data.result.questionnaires в плоские process variables:
+        {ELEMENT_ID}_{QUESTIONNAIRE_CODE}_{QUESTION_CODE} = answer
+
+        - ELEMENT_ID = original_message.activity_id
+        - answer == null -> переменная создаётся со значением None (Camunda Null)
+        """
+        try:
+            original_message = message_data.get("original_message", {}) or {}
+            element_id = original_message.get("activity_id")
+            if not element_id:
+                return
+
+            questionnaires = (
+                message_data.get("response_data", {})
+                .get("result", {})
+                .get("questionnaires")
+            )
+            if not isinstance(questionnaires, dict):
+                return
+
+            items = questionnaires.get("items")
+            if not isinstance(items, list) or not items:
+                return
+
+            # DEBUG: краткая сводка, сырой JSON не пишем в процесс
+            logger.debug(f"Questionnaires: taskId={questionnaires.get('taskId')} items={len(items)}")
+
+            for qn in items:
+                if not isinstance(qn, dict):
+                    continue
+                qn_code = qn.get("CODE")
+                if not qn_code:
+                    continue
+                questions = qn.get("questions")
+                if not isinstance(questions, list):
+                    continue
+
+                for q in questions:
+                    if not isinstance(q, dict):
+                        continue
+                    q_code = q.get("CODE")
+                    if not q_code:
+                        continue
+                    var_name = f"{element_id}_{qn_code}_{q_code}"
+
+                    q_type = q.get("TYPE")
+                    answer = q.get("answer")
+                    variables[var_name] = self._convert_question_answer_for_camunda(q_type, answer)
+
+        except Exception as e:
+            logger.error(f"Ошибка преобразования анкет в переменные Camunda: {e}")
+
     def _process_response_message(self, message_data: Dict[str, Any]) -> Tuple[bool, Optional[Dict[str, Any]]]:
         """
         Обработка ответного сообщения и завершение задачи в Camunda
@@ -648,6 +732,10 @@ class UniversalCamundaWorker:
             
             # Извлекаем данные из ответа системы (например, Bitrix24)
             self._extract_response_data(response_data, variables)
+
+            # Анкеты: раскладываем ответы по вопросам в плоские переменные процесса
+            # Формат: {ELEMENT_ID}_{QUESTIONNAIRE_CODE}_{QUESTION_CODE}
+            self._apply_questionnaires_to_variables(message_data, variables)
             
             # Новая логика для conditionExpression с activity_id
             activity_id = original_message.get("activity_id")
