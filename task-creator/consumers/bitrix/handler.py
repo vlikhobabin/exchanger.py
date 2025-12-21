@@ -1206,7 +1206,54 @@ class BitrixTaskHandler:
         except (TypeError, ValueError):
             logger.warning(f"Некорректное значение переменной {key}: {raw_value}")
             return None
-    
+
+    def _get_camunda_datetime(self, variables: Optional[Dict[str, Any]], key: str) -> Optional[datetime]:
+        """
+        Безопасно извлекает datetime из переменной Camunda (ISO 8601 формат).
+
+        Поддерживаемые форматы:
+        - "2024-12-31T00:00:00" (ISO 8601 без timezone)
+        - "2024-12-31" (только дата)
+        - {"value": "2024-12-31T00:00:00"} (Camunda object format)
+
+        Returns:
+            datetime объект или None если значение отсутствует или некорректно
+        """
+        if not variables or not isinstance(variables, dict):
+            return None
+
+        raw_value = variables.get(key)
+        if raw_value is None:
+            return None
+
+        # Извлечение значения из Camunda object format
+        if isinstance(raw_value, dict):
+            raw_value = raw_value.get('value', raw_value.get('VALUE'))
+
+        if not isinstance(raw_value, str):
+            logger.warning(f"Некорректный тип переменной {key}: ожидается строка, получено {type(raw_value)}")
+            return None
+
+        raw_value = raw_value.strip()
+        if not raw_value:
+            return None
+
+        # Попытка парсинга различных форматов ISO 8601
+        formats = [
+            '%Y-%m-%dT%H:%M:%S',      # 2024-12-31T00:00:00
+            '%Y-%m-%d %H:%M:%S',      # 2024-12-31 00:00:00
+            '%Y-%m-%d',               # 2024-12-31
+        ]
+
+        for fmt in formats:
+            try:
+                return datetime.strptime(raw_value, fmt)
+            except ValueError:
+                continue
+
+        logger.warning(f"Некорректный формат даты переменной {key}: {raw_value}")
+        return None
+
     def _build_task_data_from_template(
         self,
         template_data: Dict[str, Any],
@@ -1366,18 +1413,39 @@ class BitrixTaskHandler:
                 task_data['CREATED_BY'] = 1
                 logger.warning("CREATED_BY не указан в шаблоне и startedBy отсутствует, используем значение по умолчанию 1")
         
-        # DEADLINE из DEADLINE_AFTER (секунды → datetime)
+        # DEADLINE: приоритет min(deadline процесса, deadline шаблона)
+        # deadline процесса - крайний срок всего процесса (ISO 8601 datetime)
+        # DEADLINE_AFTER шаблона - секунды от текущего момента
+        process_deadline = self._get_camunda_datetime(variables, 'deadline')
+        template_deadline: Optional[datetime] = None
+
         deadline_after = template.get('DEADLINE_AFTER')
         if deadline_after:
             try:
                 deadline_after_seconds = int(deadline_after)
                 if deadline_after_seconds > 0:
-                    deadline_date = datetime.now() + timedelta(seconds=deadline_after_seconds)
-                    # Формат для Bitrix24: YYYY-MM-DD HH:MM:SS
-                    task_data['DEADLINE'] = deadline_date.strftime('%Y-%m-%d %H:%M:%S')
-                    logger.debug(f"Вычислен DEADLINE: {task_data['DEADLINE']} (через {deadline_after_seconds} секунд)")
+                    template_deadline = datetime.now() + timedelta(seconds=deadline_after_seconds)
+                    logger.debug(f"Вычислен deadline из шаблона: {template_deadline} (через {deadline_after_seconds} секунд)")
             except (ValueError, TypeError) as e:
                 logger.warning(f"Некорректный DEADLINE_AFTER в шаблоне: {deadline_after}, ошибка: {e}")
+
+        # Определение итогового DEADLINE
+        final_deadline: Optional[datetime] = None
+        if process_deadline and template_deadline:
+            # Оба значения есть - берём минимальный
+            final_deadline = min(process_deadline, template_deadline)
+            logger.debug(f"DEADLINE: min(процесс={process_deadline}, шаблон={template_deadline}) = {final_deadline}")
+        elif process_deadline:
+            # Только deadline процесса
+            final_deadline = process_deadline
+            logger.debug(f"DEADLINE из переменной процесса: {final_deadline}")
+        elif template_deadline:
+            # Только deadline шаблона
+            final_deadline = template_deadline
+            logger.debug(f"DEADLINE из шаблона: {final_deadline}")
+
+        if final_deadline:
+            task_data['DEADLINE'] = final_deadline.strftime('%Y-%m-%d %H:%M:%S')
         
         # Участники из members.by_type
         members_by_type = members.get('by_type', {})
@@ -1824,7 +1892,13 @@ class BitrixTaskHandler:
                 task_data['PARENT_ID'] = parent_task_id
                 task_data['SUBORDINATE'] = 'Y'
                 logger.debug(f"Fallback: задача помечена как подзадача родителя {parent_task_id}")
-            
+
+            # DEADLINE из переменной процесса (в fallback режиме нет шаблона)
+            process_deadline = self._get_camunda_datetime(variables, 'deadline')
+            if process_deadline:
+                task_data['DEADLINE'] = process_deadline.strftime('%Y-%m-%d %H:%M:%S')
+                logger.debug(f"Fallback: DEADLINE из переменной процесса: {task_data['DEADLINE']}")
+
             # Извлекаем и добавляем пользовательские поля из метаданных сообщения
             # (UF_RESULT_EXPECTED, UF_RESULT_QUESTION и другие)
             user_fields = self._extract_user_fields(metadata)
