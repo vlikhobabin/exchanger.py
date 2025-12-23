@@ -847,7 +847,9 @@ curl "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.user.supervis
 
 #### Метод: `imena.camunda.tasktemplate.get`
 
-**Описание (v2.5):** Возвращает полный JSON шаблона задачи по `CAMUNDA_PROCESS_ID` и `ELEMENT_ID`. Используется Camunda 7 для создания задач в Битрикс24 по этапам процессов.
+**Описание (v2.6):** Возвращает полный JSON шаблона задачи по `CAMUNDA_PROCESS_ID` и `ELEMENT_ID`. Используется Camunda 7 для создания задач в Битрикс24 по этапам процессов.
+
+**Ключевая особенность v2.6:** Добавлено поле `questionnairesInDescription` — возвращает анкеты, выбранные для вывода в описание создаваемой задачи.
 
 **Ключевая особенность v2.5:** Если для участника настроен Complex Resolver, он **автоматически выполняется** при вызове API. Python-воркер получает готовые данные с разрешённым `USER_ID` и `ACCESS_CODE` без дополнительной обработки.
 
@@ -1010,6 +1012,28 @@ curl -X POST "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.taskt
         "total": 1,
         "has_codes": true
       },
+      "questionnairesInDescription": {
+        "items": [
+          {
+            "ID": 2,
+            "CODE": "onboarding",
+            "TITLE": "Данные для оформления",
+            "questions": [
+              {
+                "CODE": "FULL_NAME",
+                "NAME": "ФИО сотрудника",
+                "TYPE": "string",
+                "IS_REQUIRED": "Y",
+                "SORT": 100,
+                "DESCRIPTION": "Укажите полное ФИО",
+                "DEFAULT_VALUE": null,
+                "ENUM_OPTIONS": []
+              }
+            ]
+          }
+        ],
+        "total": 1
+      },
       "meta": {
         "camundaProcessId": "Process_qunad56t0",
         "elementId": "Activity_1522g7n",
@@ -1030,6 +1054,7 @@ curl -X POST "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.taskt
 | `checklists` | object | Чек-листы с древовидной структурой |
 | `files` | array | Прикрепленные файлы (Bitrix Disk) |
 | `questionnaires` | object | **Анкеты с CODE полями для Camunda интеграции (v2.0)** |
+| `questionnairesInDescription` | object | **Анкеты для вывода в описание задачи (v2.6)** |
 | `meta` | object | Метаданные запроса |
 
 **Структура members (v2.5 - с авто-выполнением резолверов):**
@@ -1096,6 +1121,45 @@ curl -X POST "https://{portal}/rest/{user_id}/{webhook_code}/imena.camunda.taskt
 | `enum` | Выбор из списка | `"ИМЕНА, ООО"` |
 | `user` | ID пользователя Bitrix24 | `"123"` |
 | `universal_list` | Элемент Универсального списка | `"456"` (ID элемента IBlock) |
+
+**Структура questionnairesInDescription (v2.6):**
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `items` | array | Массив анкет, выбранных для вывода в описание задачи |
+| `total` | int | Количество выбранных анкет |
+
+**Структура анкеты (questionnairesInDescription.items[]):**
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `ID` | int | ID анкеты шаблона |
+| `CODE` | string\|null | Уникальный код анкеты для Camunda |
+| `TITLE` | string | Название анкеты |
+| `questions` | array | Массив вопросов анкеты |
+
+> **Назначение:** Позволяет Python-воркеру Camunda использовать данные выбранных анкет для формирования описания создаваемой задачи. В отличие от `questionnaires`, возвращает только те анкеты, которые были выбраны в настройках шаблона через виджет `widget.questionnaire.in.description`.
+
+**Пример использования в Camunda worker:**
+
+```python
+template_data = api.call('imena.camunda.tasktemplate.get', {
+    'camundaProcessId': process_id,
+    'elementId': element_id,
+    'processVariables': variables
+})
+
+# Получаем анкеты для описания
+qid = template_data['result']['data']['questionnairesInDescription']
+if qid['total'] > 0:
+    for questionnaire in qid['items']:
+        description += f"\n\n## {questionnaire['TITLE']}\n"
+        for q in questionnaire['questions']:
+            # Формируем ключ переменной: {ELEMENT_ID}_{QUESTIONNAIRE_CODE}_{QUESTION_CODE}
+            var_key = f"{element_id}_{questionnaire['CODE']}_{q['CODE']}"
+            value = variables.get(var_key, '-')
+            description += f"- **{q['NAME']}**: {value}\n"
+```
 
 **Использование CODE полей в Camunda (v2.0):**
 
@@ -2365,8 +2429,16 @@ error_log("YourHandler: Processing request with ID={$id}");
 ---
 
 **Автор:** vlikhobabin@gmail.com
-**Дата:** 2025-12-13
-**Версия:** 2.5
+**Дата:** 2025-12-23
+**Версия:** 2.6
+
+**Изменения в версии 2.6:**
+- ✅ Новое поле `questionnairesInDescription` в ответе `imena.camunda.tasktemplate.get`
+- ✅ Возвращает анкеты, выбранные для вывода в описание задачи
+- ✅ Полная структура анкет с вопросами для формирования описания
+- ✅ Новый виджет `widget.questionnaire.in.description` для выбора анкет в шаблоне
+- ✅ Python-воркер может использовать данные анкет для формирования описания создаваемой задачи
+- ✅ Документация обновлена для v2.6
 
 **Изменения в версии 2.5:**
 - ✅ **Маппинг параметров резолверов** - гибкая привязка параметров к переменным процесса

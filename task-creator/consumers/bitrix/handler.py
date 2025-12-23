@@ -255,7 +255,35 @@ class BitrixTaskHandler:
             if template_files:
                 self.stats["template_files_found"] += len(template_files)
                 logger.debug(f"Найдено {len(template_files)} файлов в шаблоне для дальнейшего прикрепления (task_id={task_id})")
-            
+
+            # Шаг 3.05: Добавление блока анкет (questionnairesInDescription) в описание задачи
+            # Блок анкет вставляется ПЕРЕД блоком переменных процесса
+            qid_data = self._extract_questionnaires_in_description(template_data)
+            if qid_data:
+                # Получаем переменные процесса для формирования ответов
+                process_variables = {}
+                if isinstance(metadata, dict):
+                    pv_from_metadata = metadata.get('processVariables')
+                    if isinstance(pv_from_metadata, dict):
+                        process_variables = pv_from_metadata
+                if not process_variables:
+                    pv_direct = message_data.get('process_variables')
+                    if isinstance(pv_direct, dict):
+                        process_variables = pv_direct
+
+                questionnaires_block = self._build_questionnaires_description_block(
+                    qid_data,
+                    process_variables,
+                    element_id
+                )
+                if questionnaires_block:
+                    current_description = task_data.get('DESCRIPTION', '') or ''
+                    if current_description:
+                        task_data['DESCRIPTION'] = f"{current_description.rstrip()}\n\n---\n{questionnaires_block}"
+                    else:
+                        task_data['DESCRIPTION'] = questionnaires_block
+                    logger.debug(f"Добавлен блок анкет (questionnairesInDescription) в описание задачи {task_id}")
+
             # Шаг 3.1: Добавление блока переменных процесса в описание задачи
             variables_block = self._build_process_variables_block(message_data, camunda_process_id, task_id)
             if variables_block:
@@ -2267,7 +2295,278 @@ class BitrixTaskHandler:
             self.stats["questionnaires_failed"] += 1
             logger.error(f"Неожиданная ошибка при добавлении анкет к задаче {task_id}: {e}")
             return False
-    
+
+    def _extract_questionnaires_in_description(self, template_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Извлечение анкет для вставки в описание задачи (questionnairesInDescription.items)
+
+        Args:
+            template_data: Данные шаблона от API imena.camunda.tasktemplate.get
+
+        Returns:
+            Список анкет с вопросами для вставки в описание
+        """
+        if not template_data:
+            return []
+
+        qid_section = template_data.get('questionnairesInDescription') or {}
+        if not isinstance(qid_section, dict):
+            logger.debug("Секция questionnairesInDescription имеет некорректный формат (ожидался dict)")
+            return []
+
+        total = qid_section.get('total', 0)
+        if not total:
+            logger.debug("questionnairesInDescription.total = 0, анкеты для описания отсутствуют")
+            return []
+
+        items = qid_section.get('items')
+        if not items:
+            logger.debug("questionnairesInDescription.items пустой или отсутствует")
+            return []
+
+        if not isinstance(items, list):
+            logger.debug("questionnairesInDescription.items имеет некорректный формат (ожидался list)")
+            return []
+
+        logger.debug(f"Извлечено {len(items)} анкет для вставки в описание задачи")
+        return items
+
+    def _get_user_name_by_id(self, user_id: int) -> Optional[str]:
+        """
+        Получение имени пользователя Bitrix24 по ID через REST API user.get
+
+        Args:
+            user_id: ID пользователя Bitrix24
+
+        Returns:
+            Имя пользователя (Фамилия Имя) или None при ошибке
+        """
+        if not user_id or user_id <= 0:
+            return None
+
+        try:
+            api_url = f"{self.config.webhook_url.rstrip('/')}/user.get"
+            params = {'ID': user_id}
+
+            response = requests.get(api_url, params=params, timeout=self.config.request_timeout)
+            response.raise_for_status()
+            data = response.json()
+
+            result = data.get('result')
+            if result and isinstance(result, list) and len(result) > 0:
+                user = result[0]
+                last_name = user.get('LAST_NAME', '')
+                first_name = user.get('NAME', '')
+                full_name = f"{last_name} {first_name}".strip()
+                if full_name:
+                    return full_name
+                # Fallback на email или логин
+                return user.get('EMAIL') or user.get('LOGIN') or str(user_id)
+
+            logger.debug(f"Пользователь с ID={user_id} не найден в Bitrix24")
+            return None
+
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Ошибка запроса user.get для user_id={user_id}: {e}")
+            return None
+        except Exception as e:
+            logger.warning(f"Неожиданная ошибка при получении имени пользователя {user_id}: {e}")
+            return None
+
+    def _get_list_element_name(self, iblock_id: int, element_id: int) -> Optional[str]:
+        """
+        Получение названия элемента универсального списка Bitrix24 через REST API lists.element.get
+
+        Args:
+            iblock_id: ID инфоблока (универсального списка)
+            element_id: ID элемента списка
+
+        Returns:
+            Название элемента или None при ошибке
+        """
+        if not iblock_id or not element_id:
+            return None
+
+        try:
+            api_url = f"{self.config.webhook_url.rstrip('/')}/lists.element.get"
+            params = {
+                'IBLOCK_TYPE_ID': 'lists',
+                'IBLOCK_ID': iblock_id,
+                'ELEMENT_ID': element_id
+            }
+
+            response = requests.get(api_url, params=params, timeout=self.config.request_timeout)
+            response.raise_for_status()
+            data = response.json()
+
+            result = data.get('result')
+            if result and isinstance(result, list) and len(result) > 0:
+                element = result[0]
+                name = element.get('NAME')
+                if name:
+                    return name
+
+            logger.debug(f"Элемент списка iblock_id={iblock_id}, element_id={element_id} не найден")
+            return None
+
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Ошибка запроса lists.element.get для iblock_id={iblock_id}, element_id={element_id}: {e}")
+            return None
+        except Exception as e:
+            logger.warning(f"Неожиданная ошибка при получении элемента списка: {e}")
+            return None
+
+    def _format_questionnaire_answer(
+        self,
+        question: Dict[str, Any],
+        raw_value: Any
+    ) -> str:
+        """
+        Форматирование ответа на вопрос анкеты в человекочитаемый вид
+
+        Args:
+            question: Данные вопроса (CODE, NAME, TYPE, ENUM_OPTIONS и т.д.)
+            raw_value: Сырое значение из переменных процесса
+
+        Returns:
+            Отформатированное значение для отображения
+        """
+        if raw_value is None:
+            return "-"
+
+        # Извлекаем value из Camunda формата {"value": ..., "type": ...}
+        value = raw_value
+        if isinstance(raw_value, dict):
+            value = raw_value.get('value', raw_value.get('VALUE', raw_value))
+
+        if value is None or value == '':
+            return "-"
+
+        question_type = (question.get('TYPE') or '').lower()
+
+        # Boolean: true → Да, false → Нет
+        if question_type == 'boolean':
+            if isinstance(value, bool):
+                return "Да" if value else "Нет"
+            if isinstance(value, str):
+                return "Да" if value.lower() in ('true', '1', 'yes', 'да') else "Нет"
+            if isinstance(value, (int, float)):
+                return "Да" if value != 0 else "Нет"
+            return "-"
+
+        # Date: ISO → DD.MM.YYYY
+        if question_type == 'date':
+            if isinstance(value, str):
+                try:
+                    # Попытка распарсить ISO формат
+                    normalized = value.strip().replace('Z', '+00:00')
+                    if 'T' in normalized:
+                        dt = datetime.fromisoformat(normalized.split('T')[0])
+                    else:
+                        dt = datetime.fromisoformat(normalized)
+                    return dt.strftime("%d.%m.%Y")
+                except ValueError:
+                    try:
+                        dt = datetime.strptime(value.strip()[:10], "%Y-%m-%d")
+                        return dt.strftime("%d.%m.%Y")
+                    except ValueError:
+                        return str(value)
+            return str(value)
+
+        # User: ID → Имя пользователя
+        if question_type == 'user':
+            try:
+                user_id = int(value)
+                user_name = self._get_user_name_by_id(user_id)
+                return user_name if user_name else str(user_id)
+            except (TypeError, ValueError):
+                return str(value)
+
+        # Universal list: ID → Название элемента
+        if question_type == 'universal_list':
+            try:
+                element_id = int(value)
+                # Получаем iblock_id из ENUM_OPTIONS или _iblockId
+                iblock_id = None
+                enum_options = question.get('ENUM_OPTIONS')
+                if isinstance(enum_options, dict):
+                    iblock_id = enum_options.get('iblock_id')
+                if not iblock_id:
+                    iblock_id = question.get('_iblockId')
+
+                if iblock_id:
+                    element_name = self._get_list_element_name(int(iblock_id), element_id)
+                    return element_name if element_name else str(element_id)
+                return str(element_id)
+            except (TypeError, ValueError):
+                return str(value)
+
+        # Integer
+        if question_type == 'integer':
+            try:
+                return str(int(value))
+            except (TypeError, ValueError):
+                return str(value)
+
+        # String, enum и остальные типы
+        return str(value)
+
+    def _build_questionnaires_description_block(
+        self,
+        questionnaires: List[Dict[str, Any]],
+        process_variables: Dict[str, Any],
+        element_id: str
+    ) -> Optional[str]:
+        """
+        Формирование BB-code блока с данными анкет для вставки в описание задачи
+
+        Args:
+            questionnaires: Список анкет из questionnairesInDescription.items
+            process_variables: Переменные процесса Camunda
+            element_id: ID текущего элемента диаграммы (Activity)
+
+        Returns:
+            BB-code строка с данными анкет или None если анкет нет
+        """
+        if not questionnaires:
+            return None
+
+        blocks: List[str] = []
+
+        for questionnaire in questionnaires:
+            questionnaire_code = questionnaire.get('CODE') or ''
+            questionnaire_title = questionnaire.get('TITLE') or questionnaire_code or 'Анкета'
+            questions = questionnaire.get('questions') or []
+
+            if not questions:
+                continue
+
+            lines: List[str] = []
+            # Заголовок анкеты в BB-code (жирный)
+            lines.append(f"[B]{questionnaire_title}[/B]")
+
+            for question in questions:
+                question_code = question.get('CODE') or ''
+                question_name = question.get('NAME') or question_code or 'Вопрос'
+
+                # Формируем ключ переменной: {ELEMENT_ID}_{QUESTIONNAIRE_CODE}_{QUESTION_CODE}
+                var_key = f"{element_id}_{questionnaire_code}_{question_code}"
+                raw_value = process_variables.get(var_key)
+
+                # Форматируем значение в зависимости от типа
+                formatted_value = self._format_questionnaire_answer(question, raw_value)
+
+                # Добавляем строку с вопросом и ответом
+                lines.append(f"• {question_name}: {formatted_value}")
+
+            if len(lines) > 1:  # Если есть хотя бы один вопрос кроме заголовка
+                blocks.append("\n".join(lines))
+
+        if not blocks:
+            return None
+
+        return "\n\n".join(blocks)
+
     # ЗАКОММЕНТИРОВАНО: Используется API шаблонов задач
     # Дата: 2025-11-03
     # Возможно использование в будущем для fallback или других сценариев
