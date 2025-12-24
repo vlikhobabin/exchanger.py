@@ -6,11 +6,58 @@
 
 Этот модуль обрабатывает сообщения из RabbitMQ очереди `bitrix24.queue` и создает соответствующие задачи в Bitrix24 через REST API.
 
+## Архитектура
+
+```
+task-creator/consumers/bitrix/
+├── handler.py              # Оркестратор создания задач (860 строк)
+├── config.py               # Конфигурация Bitrix24
+├── clients/
+│   ├── __init__.py
+│   └── bitrix_client.py    # API-клиент Bitrix24 (277 строк)
+├── services/
+│   ├── __init__.py
+│   ├── checklist_service.py      # Чек-листы задач (541 строка)
+│   ├── diagram_service.py        # Диаграммы Camunda (235 строк)
+│   ├── file_service.py           # Файлы задач (196 строк)
+│   ├── predecessor_service.py    # Зависимости задач (469 строк)
+│   ├── questionnaire_service.py  # Анкеты задач (394 строки)
+│   ├── sync_service.py           # Синхронизация RabbitMQ (268 строк)
+│   ├── template_service.py       # Шаблоны задач (571 строка)
+│   └── user_service.py           # Пользователи (206 строк)
+├── validators/
+│   ├── __init__.py
+│   └── field_validator.py  # Валидация полей (400 строк)
+├── utils/
+│   ├── __init__.py
+│   └── camunda_utils.py    # Утилиты Camunda (162 строки)
+└── README.md
+```
+
 ## Компоненты
 
-- `handler.py` - Основной обработчик сообщений для создания задач в Bitrix24
-- `config.py` - Конфигурация специфичная для Bitrix24
-- `README.md` - Эта документация
+### Основные
+- `handler.py` — Оркестратор создания задач, координирует работу всех сервисов
+- `config.py` — Конфигурация специфичная для Bitrix24
+
+### Клиенты (`clients/`)
+- `BitrixAPIClient` — HTTP-клиент для Bitrix24 REST API (sync/async запросы)
+
+### Сервисы (`services/`)
+- `ChecklistService` — Создание и управление чек-листами задач
+- `DiagramService` — Работа с диаграммами Camunda и параметрами процессов
+- `FileService` — Прикрепление файлов к задачам
+- `PredecessorService` — Управление зависимостями между задачами
+- `QuestionnaireService` — Работа с анкетами задач
+- `SyncService` — Синхронизация и отправка сообщений в RabbitMQ
+- `TemplateService` — Получение и обработка шаблонов задач
+- `UserService` — Работа с пользователями Bitrix24
+
+### Валидаторы (`validators/`)
+- `FieldValidator` — Валидация обязательных полей при старте сервиса
+
+### Утилиты (`utils/`)
+- `camunda_utils` — Функции для работы с переменными Camunda
 
 ## Конфигурация
 

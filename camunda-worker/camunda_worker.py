@@ -599,16 +599,21 @@ class UniversalCamundaWorker:
         Требования:
         - boolean/integer/string/date -> конвертируем в соответствующий тип
         - user/enum/universal_list/прочее -> оставляем строкой
-        - answer == None -> вернуть None (Camunda Null)
+        - answer == None -> вернуть None (Camunda Null), кроме boolean
         """
-        if answer is None:
-            return None
-
         q_type_str = (str(q_type).strip().lower() if q_type is not None else "")
+
         # Bitrix v2.0: boolean answers are strings "true"/"false"
+        # ВАЖНО: Для boolean, если answer=None (чек-бокс не установлен), возвращаем False
+        # Это критично для работы Gateway условий (null != false)
         if q_type_str == "boolean":
+            if answer is None:
+                return False
             v = str(answer).strip().lower()
             return v in {"true", "1", "y", "yes", "да"}
+
+        if answer is None:
+            return None
         if q_type_str == "integer":
             try:
                 return int(str(answer).strip())
