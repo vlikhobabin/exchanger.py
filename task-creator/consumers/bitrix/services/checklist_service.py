@@ -212,7 +212,8 @@ class ChecklistService:
             total_items = 0
             errors_count = 0
 
-            for checklist in checklists_data:
+            # Создаём чек-листы в обратном порядке, т.к. Bitrix24 добавляет новые элементы сверху
+            for checklist in reversed(checklists_data):
                 checklist_name = checklist.get('name', 'Без названия')
                 checklist_items = checklist.get('items', [])
 
@@ -484,7 +485,8 @@ class ChecklistService:
             total_items = 0
             errors_count = 0
 
-            for checklist in checklists_data:
+            # Создаём чек-листы в обратном порядке, т.к. Bitrix24 добавляет новые элементы сверху
+            for checklist in reversed(checklists_data):
                 checklist_name = checklist.get('name', 'Без названия')
                 checklist_items = checklist.get('items', [])
 
