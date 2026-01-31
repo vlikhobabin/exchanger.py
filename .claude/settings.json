@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "filepath=$(echo $CLAUDE_TOOL_INPUT | jq -r '.file_path // .path // empty') && [ -n \"$filepath\" ] && echo \"$filepath\" | grep -q '\\.py$' && /opt/exchanger.py/venv/bin/ruff format --quiet \"$filepath\" 2>/dev/null; true"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "filepath=$(echo $CLAUDE_TOOL_INPUT | jq -r '.file_path // .path // empty') && [ -n \"$filepath\" ] && echo \"$filepath\" | grep -qE '\\.env\\.prod$' && echo 'BLOCKED: Запись в .env.prod запрещена хуком. Попросите пользователя снять защиту или редактируйте вручную.' && exit 1; true"
+          }
+        ]
+      }
+    ]
+  }
+}
