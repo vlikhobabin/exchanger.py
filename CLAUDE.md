@@ -1,5 +1,9 @@
 # Exchanger.py - Universal Integration Platform
 
+## Инструкции для Claude Code
+
+При начале сессии выполни `mcp__memory__read_graph` для загрузки контекста проекта из графа знаний. Это позволит сразу иметь актуальную информацию об архитектуре, компонентах и связях без повторного сканирования кодовой базы.
+
 ## О проекте
 
 Exchanger.py — комплексная платформа интеграции **Camunda BPM** с внешними системами (Bitrix24, OpenProject, 1C) через **RabbitMQ**. Обеспечивает полный цикл обработки бизнес-процессов: получение задач из Camunda, обогащение метаданными BPMN, маршрутизация во внешние системы, отслеживание выполнения и возврат результатов.
@@ -119,6 +123,15 @@ Camunda BPM (Complete Task)
 source venv/bin/activate
 EXCHANGER_ENV=dev python camunda-worker/main.py
 EXCHANGER_ENV=dev python task-creator/main.py
+```
+
+### Тестирование
+```bash
+source venv/bin/activate
+pytest -v                 # все тесты
+pytest --co -q            # список тестов (dry-run)
+pytest --cov -q           # покрытие
+pytest -k "camunda_utils" # конкретный модуль
 ```
 
 ## Важные особенности кода

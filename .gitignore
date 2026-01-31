@@ -215,7 +215,7 @@ temp/
 
 # Diagnostic и debug файлы
 debug_*.py
-test_*.py
+# test_*.py  # закомментировано — тесты в tests/
 # *_test.py
 diagnostic_*.json
 *_diagnostics.json
@@ -301,7 +301,8 @@ metrics/
 # User field cache files
 .uf_result_answer_cache.json 
 
-test_*.*
+# test_*.*  # закомментировано — тесты в tests/
+!/tests/
 .cursor/
 tasktemplate_api/
 properties_api/

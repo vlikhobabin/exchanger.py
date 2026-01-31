@@ -1,0 +1,25 @@
+[project]
+name = "exchanger-py"
+version = "2.3.0"
+description = "Universal Integration Platform — Camunda BPM ↔ Bitrix24/OpenProject/1C"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "unit: Pure unit tests without external dependencies",
+    "integration: Tests that require external services",
+]
+
+[tool.coverage.run]
+source = ["camunda-worker", "task-creator", "camunda-sync"]
+omit = [
+    "venv/*",
+    "*/tools/*",
+    "tests/*",
+    "*/__pycache__/*",
+]
